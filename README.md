@@ -109,12 +109,12 @@ trusted CA chain (see [Ingress Configuration](#4-ingress-configuration)).
 
 ### 3. Configuration Options
 
-| Variable | Description | Default |
-| -------------------------------- | ------------------------ | ------------------------------- |
-| `ALLOWED_CLIENT_SUBJECT_DN_PATH` | Path to the file listing allowed client certificate DNs.                                                                     | `/config/allowed_client_dn.txt` |
-| `SSL_CLIENT_SUBJECT_DN_HEADER` | HTTP header containing the client certificate DN. For **ingress-nginx**, this should not be changed. | `ssl-client-subject-dn`         |
-| `USE_WATCHDOG`                   | Enables file-change monitoring using [watchdog](https://pypi.org/project/watchdog/). Useful for non-Kubernetes environments. | `False`                         |
-| `LOG_LEVEL`                      | Logging verbosity. Options: `DEBUG`, `INFO`, `WARNING`, `ERROR`.                                                             | `INFO`                          |
+| Variable | Description                                                                                                                              | Default |
+| -------------------------------- |------------------------------------------------------------------------------------------------------------------------------------------| ------------------------------- |
+| `ALLOWED_CLIENT_SUBJECT_DN_PATH` | Path to the file listing allowed client certificate DNs. DNs should be as close to RFC4514 as possible, and stored as UTF-8 in the file. | `/config/allowed_client_dn.txt` |
+| `SSL_CLIENT_SUBJECT_DN_HEADER` | HTTP header containing the client certificate DN. For **ingress-nginx**, this should not be changed.                                     | `ssl-client-subject-dn`         |
+| `USE_WATCHDOG`                   | Enables file-change monitoring using [watchdog](https://pypi.org/project/watchdog/). Useful for non-Kubernetes environments.             | `False`                         |
+| `LOG_LEVEL`                      | Logging verbosity. Options: `DEBUG`, `INFO`, `WARNING`, `ERROR`.                                                                         | `INFO`                          |
 
 **File reload behavior:**
 

@@ -27,21 +27,8 @@ from pydantic_settings import BaseSettings
 from watchdog.events import FileModifiedEvent, FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
 
-# OID not included in cryptography.x509.oid.NameOID
-OID_ORGANIZATION_IDENTIFIER = x509.ObjectIdentifier("2.5.4.97")
-
-_OID_SHORT_NAMES = {
-    NameOID.COUNTRY_NAME: "C",
-    NameOID.STATE_OR_PROVINCE_NAME: "ST",
-    NameOID.LOCALITY_NAME: "L",
-    NameOID.ORGANIZATION_NAME: "O",
-    NameOID.ORGANIZATIONAL_UNIT_NAME: "OU",
-    NameOID.COMMON_NAME: "CN",
-    NameOID.SERIAL_NUMBER: "serialNumber",
-    NameOID.EMAIL_ADDRESS: "emailAddress",
-    OID_ORGANIZATION_IDENTIFIER: "organizationIdentifier",
-}
-
+from cryptography import x509
+import rfc4514_cmp
 
 #
 # Authorization application
@@ -49,7 +36,18 @@ _OID_SHORT_NAMES = {
 class Settings(BaseSettings):
     """Application settings."""
 
-    allowed_client_subject_dn_path: FilePath = FilePath("/config/allowed_client_dn.txt")
+    # ASSUME: DNs in this file are not necessarily in a X.509 DN normal form, so we'll parse
+    # flexibly. File MUST be in UTF-8 encoding, following RFC4514.
+    allowed_client_subject_dn_strings_path: FilePath = FilePath("/config/allowed_client_dn.txt")
+
+    # Kubernetes ingress NGINX's annotation: https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/nginx-configuration/annotations.md
+    # defined as 'The subject information of the client certificate. Example: "CN=My Client"'
+    # If we ASSUME this is the $ssl_client_s_dn variable from ngx_http_ssl_module then this is
+    # defined as (https://nginx.org/en/docs/http/ngx_http_ssl_module.html):
+    # '$ssl_client_s_dn' returns the “subject DN” string of the client certificate for an
+    #  established SSL connection according to RFC 2253 (1.11.6);'
+    # So RFC2253 format. Note that itself is obsoleted by RFC4514, so NGINX has work to do.
+    #
     ssl_client_subject_dn_header: str = "ssl-client-subject-dn"
     use_watchdog: bool = False
     log_level: str = "INFO"
@@ -57,8 +55,9 @@ class Settings(BaseSettings):
 
 class State(BaseModel):
     """Application state."""
-
-    allowed_client_subject_dn: list[str] = []
+    # "Unable to generate pydantic-core schema for <class 'cryptography.x509.name.Name'>."
+    # So we store as strings and compare as objects.
+    allowed_client_subject_dn_strings: list[str] = []
 
 
 def init_app() -> Flask:
@@ -92,6 +91,7 @@ settings = Settings()
 state = State()
 app = init_app()
 
+###BEGIN KARL HEAD
 
 def _escape_dn_value(value: str) -> str:
     """Escape special characters in a DN attribute value per RFC 4514."""
@@ -197,6 +197,38 @@ def validate() -> tuple[str, int]:
     return "OK", 200
 
 
+
+
+## ARNO =======
+@app.route("/validate", methods=["GET"])
+def validate() -> tuple[str, int]:
+    """Verify the DN from the packet header against the list of allowed DN."""
+    # dn is ASSUMEd to be sanitized as it comes from NGINX as RFC2253 DN...
+    if not (request_dn := request.headers.get(settings.ssl_client_subject_dn_header)):
+        app.logger.warning(f"no {settings.ssl_client_subject_dn_header} header on HTTP request")
+        return "Forbidden", 403
+    try:
+        # https://werkzeug.palletsprojects.com/en/stable/datastructures/#werkzeug.datastructures.Headers
+        # .get() returns str
+        request_rfc4514_name = rfc4514_cmp.dn_rfc2253_string_to_rfc4514_name(request_dn)
+    except ValueError:
+        app.logger.warning(f"Not a RFC2253 Distinguished Name {request_dn} header in HTTP request")
+        return "Forbidden", 403
+    # Main authentication line
+    # x509.Name object equals method does comparison
+    for allowed_dn_string in state.allowed_client_subject_dn_strings:
+        # Pydantic issues for storage by string, compare via object
+        allowed_dn_name = x509.Name.from_rfc4514_string(allowed_dn_string)
+        if request_rfc4514_name == allowed_dn_name:
+            app.logger.info(f"allow {request_dn}")
+            return "OK", 200
+
+    app.logger.info(f"deny {request_dn}")
+    return "Forbidden", 403
+### END ARNO
+
+
+
 #
 # File watch based on watchdog.
 #
@@ -254,24 +286,34 @@ def watch_file(filepath: FilePath, callback: Callable[[FilePath], None]) -> None
     event = threading.Event()
     threading.Thread(target=watch, daemon=True).start()
 
-
 #
 # Load DN from file.
 #
 def load_allowed_client_dn(filepath: FilePath) -> None:
     """Load list of allowed client DN from file."""
+    new_allowed_client_subject_dn_strings = []
     try:
         with filepath.open("r") as f:
-            new_allowed_client_subject_dn = [line.strip() for line in f if line.strip()]
+            lines = [line.strip() for line in f if line.strip()]
     except Exception as e:
         app.logger.error(f"cannot load allowed client DN from {filepath}: {e!s}")
     else:
-        if state.allowed_client_subject_dn != new_allowed_client_subject_dn:
-            state.allowed_client_subject_dn = new_allowed_client_subject_dn
-            app.logger.info(f"load {len(new_allowed_client_subject_dn)} DN from {filepath}")
+        # Convert DNs from "free" file format into RFC4514 format for comparison against k8s ingress
+        # NGINX's "ssl-client-subject-dn" annotation header (also converted to RFC4514 format)
+        for line in lines:
+            try:
+                rfc4514_name = rfc4514_cmp.dn_tagvalue_string_to_rfc4514_name(line)
+                rfc4514_string = rfc4514_name.rfc4514_string()
+            except ValueError:
+                app.logger.warning(f"Not a Distinguished Name {line} header in {filepath}")
+            else:
+                new_allowed_client_subject_dn_strings.append(rfc4514_string)
 
+        if state.allowed_client_subject_dn_strings != new_allowed_client_subject_dn_strings:
+            state.allowed_client_subject_dn_strings = new_allowed_client_subject_dn_strings
+            app.logger.info(f"load {len(new_allowed_client_subject_dn_strings)} DN from {filepath}")
 
 if settings.use_watchdog:
-    watchdog_file(settings.allowed_client_subject_dn_path, load_allowed_client_dn)
+    watchdog_file(settings.allowed_client_subject_dn_strings_path, load_allowed_client_dn)
 else:
-    watch_file(settings.allowed_client_subject_dn_path, load_allowed_client_dn)
+    watch_file(settings.allowed_client_subject_dn_strings_path, load_allowed_client_dn)
