@@ -29,8 +29,11 @@ def test_validate_without_dn_header(client: FlaskClient) -> None:
 
 def test_validate_with_valid_dn_header(client: FlaskClient) -> None:
     """Verify that the /validate endpoint returns 200 with correct DN header."""
+    # According to https://datatracker.ietf.org/doc/html/rfc4517#section-3.3.4
+    # Country is "the two-character codes from ISO 3166". ZZ is a user-assigned element :-)
+    # https://www.iso.org/obp/ui/#iso:pub:PUB500001:en
     headers = {
-        "ssl-client-subject-dn": "CN=CertA,OU=Dept X,O=Company Y,C=Z",
+        "ssl-client-subject-dn": "CN=CertA,OU=Dept X,O=Company Y,C=ZZ",
     }
     response = client.get("/validate", headers=headers)
     assert response.status_code == 200
