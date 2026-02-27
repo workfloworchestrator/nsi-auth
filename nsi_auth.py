@@ -217,7 +217,7 @@ def validate() -> tuple[str, int]:
     # Main authentication line
     # x509.Name object equals method does comparison
     for allowed_dn_string in state.allowed_client_subject_dn_strings:
-        # Pydantic issues for storage by string, compare via object
+        # Pydantic issues with x509.Name, so storage as string, compare via object
         allowed_dn_name = x509.Name.from_rfc4514_string(allowed_dn_string)
         if request_rfc4514_name == allowed_dn_name:
             app.logger.info(f"allow {request_dn}")
