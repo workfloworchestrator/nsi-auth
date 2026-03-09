@@ -64,8 +64,8 @@ class State:
     """Application state."""
     # "Unable to generate pydantic-core schema for <class 'cryptography.x509.name.Name'>."
     # So we store as strings and compare as objects.
-    #allowed_client_subject_dn_strings: list[x509.name.Name] = []
-    allowed_client_subject_dn_strings: list[str] = []
+    allowed_client_subject_dn_names: list[x509.name.Name] = []
+    #allowed_client_subject_dn_strings: list[str] = []
 
 
 def init_app() -> Flask:
@@ -224,9 +224,7 @@ def validate() -> tuple[str, int]:
         return "Forbidden", 403
     # Main authentication line
     # x509.Name object equals method does comparison
-    for allowed_dn_string in state.allowed_client_subject_dn_strings:
-        # Pydantic issues with x509.Name, so storage as string, compare via object
-        allowed_dn_name = x509.Name.from_rfc4514_string(allowed_dn_string)
+    for allowed_dn_name in state.allowed_client_subject_dn_names:
         if request_rfc4514_name == allowed_dn_name:
             app.logger.info(f"allow {request_dn}")
             return "OK", 200
@@ -299,7 +297,7 @@ def watch_file(filepath: FilePath, callback: Callable[[FilePath], None]) -> None
 #
 def load_allowed_client_dn(filepath: FilePath) -> None:
     """Load list of allowed client DN from file."""
-    new_allowed_client_subject_dn_strings = []
+    new_allowed_client_subject_dn_names = []
     try:
         with filepath.open("r") as f:
             lines = [line.strip() for line in f if line.strip()]
@@ -311,15 +309,15 @@ def load_allowed_client_dn(filepath: FilePath) -> None:
         for line in lines:
             try:
                 rfc4514_name = rfc4514_cmp.dn_tagvalue_string_to_rfc4514_name(line)
-                rfc4514_string = rfc4514_name.rfc4514_string()
             except ValueError:
                 app.logger.warning(f"Not a Distinguished Name {line} header in {filepath}")
             else:
-                new_allowed_client_subject_dn_strings.append(rfc4514_string)
+                new_allowed_client_subject_dn_names.append(rfc4514_name)
 
-        if state.allowed_client_subject_dn_strings != new_allowed_client_subject_dn_strings:
-            state.allowed_client_subject_dn_strings = new_allowed_client_subject_dn_strings
-            app.logger.info(f"load {len(new_allowed_client_subject_dn_strings)} DN from {filepath}")
+        # Does this work?
+        if state.allowed_client_subject_dn_names != new_allowed_client_subject_dn_names:
+            state.allowed_client_subject_dn_names = new_allowed_client_subject_dn_names
+            app.logger.info(f"load {len(new_allowed_client_subject_dn_names)} DN from {filepath}")
 
 if settings.use_watchdog:
     watchdog_file(settings.allowed_client_subject_dn_path, load_allowed_client_dn)

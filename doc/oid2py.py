@@ -61,6 +61,15 @@ f.close()
 oidobj = name2oid[b'"givenName"']
 name2oid[b'"gn"'] = oidobj
 
+# Sigh...
+name2oid[b'"organizationIdentifier"'] = b'ObjectIdentifier("2.5.4.97")'
+
+# RFC4514 says: ST      stateOrProvinceName (2.5.4.8)
+# Mozilla uses "S"
+
+oidobj = name2oid[b'"id-at-stateOrProvinceName"']
+name2oid[b'"st"'] = oidobj
+
 
 f = open("name2oid.py","wb")
 

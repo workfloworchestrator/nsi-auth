@@ -64,18 +64,21 @@ def dn_tagvalue_string_to_rfc4514_name(tagvalue_string):
         tag_string, value_string = tv.split('=')
         tag_string = tag_string.strip()
         value_string = value_string.strip()
-        # https://datatracker.ietf.org/doc/html/rfc4512#section-1.4
-        # "Short names, also known as descriptors, are used as more readable
-        #  aliases for object identifiers.  Short names are case insensitive"
-        # _name2oid is in lower-case.
-        tag_string = tag_string.lower()
 
         # Check if there are any escapes, and remove them before cryptography adds them again.
         for c in _escaped_chars:
             esc_str = '\\'+c
             if esc_str in value_string:
                 value_string = value_string.replace(esc_str, c)
+
+        if tag_string not in names2oid:
+            # https://datatracker.ietf.org/doc/html/rfc4512#section-1.4
+            # "Short names, also known as descriptors, are used as more readable
+            #  aliases for object identifiers.  Short names are case insensitive"
+            # _name2oid is in lower-case.
+            tag_string = tag_string.lower()
         oid =  names2oid[tag_string]
+
         # Cannot pass symbolic name, so Name with "GN" will not be equal to Name
         # with NameOID.GIVEN_NAME (1.xxx) :-(   Fix below
         na = x509.NameAttribute(oid,value_string)
