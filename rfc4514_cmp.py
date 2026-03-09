@@ -17,7 +17,7 @@ import sys
 
 # Official X500 OID-to-name mappings are not available. Use a Mozilla compiled list, converted
 # by our own script:
-from names2oid import names2oid
+from name2oid import names2oid
 # Reverse for cryptography's internal swapping of names for OIDs, which breaks comparisons
 _oid2names = {v: k for k, v in names2oid.items()}
 

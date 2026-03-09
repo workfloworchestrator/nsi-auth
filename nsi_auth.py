@@ -64,7 +64,8 @@ class State:
     """Application state."""
     # "Unable to generate pydantic-core schema for <class 'cryptography.x509.name.Name'>."
     # So we store as strings and compare as objects.
-    allowed_client_subject_dn_strings: list[cryptography.x509.name.Name] = []
+    #allowed_client_subject_dn_strings: list[x509.name.Name] = []
+    allowed_client_subject_dn_strings: list[str] = []
 
 
 def init_app() -> Flask:
