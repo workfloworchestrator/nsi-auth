@@ -2,11 +2,14 @@
 # Official definition of distinguishedNameMatch
 # https://datatracker.ietf.org/doc/html/rfc4517#section-4.2.15
 #
+import traceback
+
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat._oid import _OID_NAMES
 from cryptography.x509.name import _NAMEOID_TO_NAME
 import sys
+import traceback
 
 # Example: openssl x509 -nameopt RFC2253 -text output:
 #     "CN=University Corporation For Advanced Internet Development,emailAddress=knewell@internet2.edu,organizationIdentifier=NTRUS\\+MI-801069584,O=University Corporation For Advanced Internet Development,ST=Michigan,C=US"
@@ -58,37 +61,44 @@ def dn_tagvalue_string_to_rfc4514_name(tagvalue_string):
         Raises:
             ValueError: If tagvalue_string is not a valid DN.
     """
-    tvs = tagvalue_string.split(',')
-    rdns = []
-    for tv in tvs:
-        tag_string, value_string = tv.split('=')
-        tag_string = tag_string.strip()
-        value_string = value_string.strip()
+    try:
+        tvs = tagvalue_string.split(',')
+        rdns = []
+        for tv in tvs:
+            tag_string, value_string = tv.split('=')
+            tag_string = tag_string.strip()
+            value_string = value_string.strip()
 
-        # Check if there are any escapes, and remove them before cryptography adds them again.
-        for c in _escaped_chars:
-            esc_str = '\\'+c
-            if esc_str in value_string:
-                value_string = value_string.replace(esc_str, c)
+            # Check if there are any escapes, and remove them before cryptography adds them again.
+            for c in _escaped_chars:
+                esc_str = '\\'+c
+                if esc_str in value_string:
+                    value_string = value_string.replace(esc_str, c)
 
-        if tag_string not in names2oid:
-            # https://datatracker.ietf.org/doc/html/rfc4512#section-1.4
-            # "Short names, also known as descriptors, are used as more readable
-            #  aliases for object identifiers.  Short names are case insensitive"
-            # _name2oid is in lower-case.
-            tag_string = tag_string.lower()
-        oid =  names2oid[tag_string]
+            if tag_string not in names2oid:
+                # https://datatracker.ietf.org/doc/html/rfc4512#section-1.4
+                # "Short names, also known as descriptors, are used as more readable
+                #  aliases for object identifiers.  Short names are case insensitive"
+                # _name2oid is in lower-case.
+                tag_string = tag_string.lower()
+            oid =  names2oid[tag_string]
 
-        # Cannot pass symbolic name, so Name with "GN" will not be equal to Name
-        # with NameOID.GIVEN_NAME (1.xxx) :-(   Fix below
-        na = x509.NameAttribute(oid,value_string)
-        rdn = x509.RelativeDistinguishedName([na])
-        rdns.append(rdn)
+            # Cannot pass symbolic name, so Name with "GN" will not be equal to Name
+            # with NameOID.GIVEN_NAME (1.xxx) :-(   Fix below
+            na = x509.NameAttribute(oid,value_string)
+            rdn = x509.RelativeDistinguishedName([na])
+            rdns.append(rdn)
 
-    rdns.reverse()
-    n = x509.Name(rdns)
-    # Hack to convert tag OIDs to symbolic names
-    rfc4514_string = n.rfc4514_string(_oid2names)
-    return x509.Name.from_rfc4514_string(rfc4514_string,names2oid)
-
+        rdns.reverse()
+        n = x509.Name(rdns)
+        # Hack to convert tag OIDs to symbolic names
+        rfc4514_string = n.rfc4514_string(_oid2names)
+        return x509.Name.from_rfc4514_string(rfc4514_string,names2oid)
+    except ValueError as e:
+        # Repeat ValueErrors from cryptography
+        raise e
+    except Exception as e:
+        # Turn other errors into ValueErrors
+        traceback.print_exc()
+        raise ValueError(e)
 
