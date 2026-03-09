@@ -31,7 +31,8 @@ class Settings(BaseSettings):
 
     # ASSUME: DNs in this file are not necessarily in a X.509 DN normal form, so we'll parse
     # flexibly. File MUST be in UTF-8 encoding, following RFC4514.
-    allowed_client_subject_dn_path: FilePath = FilePath("/config/allowed_client_dn.txt")
+    #allowed_client_subject_dn_path: FilePath = FilePath("/config/allowed_client_dn.txt")
+    allowed_client_subject_dn_path: FilePath = FilePath("allowed_client_dn.txt")
 
     # Kubernetes ingress NGINX's annotation: https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/nginx-configuration/annotations.md
     # defined as 'The subject information of the client certificate. Example: "CN=My Client"'
@@ -42,15 +43,21 @@ class Settings(BaseSettings):
     # So RFC2253 format. Note that itself is obsoleted by RFC4514, so NGINX has work to do.
     #
     ssl_client_subject_dn_header: str = "ssl-client-subject-dn"
+
+    #ARNOTODO: Traefik apparently cannot put DN in header, but just the full cert.
+
     use_watchdog: bool = False
     log_level: str = "INFO"
 
 
-class State(BaseModel):
+# State niet van BaseModel
+# Anders DataClass
+
+class State:
     """Application state."""
     # "Unable to generate pydantic-core schema for <class 'cryptography.x509.name.Name'>."
     # So we store as strings and compare as objects.
-    allowed_client_subject_dn_strings: list[str] = []
+    allowed_client_subject_dn_strings: list[cryptography.x509.name.Name] = []
 
 
 def init_app() -> Flask:
