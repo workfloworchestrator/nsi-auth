@@ -44,3 +44,12 @@ def test_validate_with_invalid_dn_header(client: FlaskClient) -> None:
     }
     response = client.get("/validate", headers=headers)
     assert response.status_code == 403
+
+def test_validate_wrong_order_dn_header(client: FlaskClient) -> None:
+    """Verify that the /validate endpoint returns 403 with incorrect DN header.
+    header value must be in RFC2253 notation."""
+    headers = {
+        "ssl-client-subject-dn": "C=ZZ,O=Company Y,OU=Dept X,CN=CertA",
+    }
+    response = client.get("/validate", headers=headers)
+    assert response.status_code == 403
