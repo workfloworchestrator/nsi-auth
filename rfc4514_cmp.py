@@ -97,7 +97,8 @@ def dn_tagvalue_string_to_rfc4514_name(tagvalue_string):
         firstoid = oidlist[0]
         lastoid = oidlist[-1]
         bigtosmall = True
-        # heuristic to determine order.
+        # Heuristic to determine order. These two fields MUST be "recognized"
+        # https://datatracker.ietf.org/doc/html/rfc4514#section-3
         if firstoid == NameOID.COMMON_NAME:
             bigtosmall = False
         elif lastoid == NameOID.COUNTRY_NAME:
