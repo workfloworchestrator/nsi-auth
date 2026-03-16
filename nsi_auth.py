@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     #allowed_client_subject_dn_path: FilePath = FilePath("/config/allowed_client_dn.txt")
     allowed_client_subject_dn_path: FilePath = FilePath("allowed_client_dn.txt")
 
+    # Client TLS certificate Subject DistinguishedName as HTTPS Header:
+    # -----------------------------------------------------------------
     # Kubernetes ingress NGINX's annotation: https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/nginx-configuration/annotations.md
     # defined as 'The subject information of the client certificate. Example: "CN=My Client"'
     # If we ASSUME this is the $ssl_client_s_dn variable from ngx_http_ssl_module then this is
@@ -46,9 +48,25 @@ class Settings(BaseSettings):
     #  established SSL connection according to RFC 2253 (1.11.6);'
     # So RFC2253 format. Note that itself is obsoleted by RFC4514, so NGINX has work to do.
     #
-    ssl_client_subject_dn_header: str = "ssl-client-subject-dn"
+    tls_client_subject_dn_header: str = "ssl-client-subject-dn"
 
-    #ARNOTODO: Traefik apparently cannot put DN in header, but just the full cert.
+    # Full Client TLS certificate as HTTPS Header:
+    # --------------------------------------------
+    # For Traefik:
+    # * https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/passtlsclientcert/
+    # * ``that contains the pem.''
+    # * https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/passtlsclientcert/#pem
+    # * ``The delimiters and \n will be removed.
+    # * If there are more than one certificate, they are separated by a ",".''
+    # * More elaborate:
+    # * https://doc.traefik.io/traefik/v2.1/middlewares/passtlsclientcert/
+    # * ``In the example, it is the part between -----BEGIN CERTIFICATE----- and -----END CERTIFICATE----- delimiters :''
+    #
+    # * k8s ingress Traefik uses this header, see https://doc.traefik.io/traefik/v1.7/configuration/backends/kubernetes/#general-annotations
+    tls_client_cert_header: str = "X-Forwarded-Tls-Client-Cert"
+
+    # Do we look at DN or at FullCert for client authentication?
+    tls_use_cert_header: bool = True
 
     use_watchdog: bool = False
     log_level: str = "INFO"
@@ -99,26 +117,40 @@ app = init_app()
 @app.route("/validate", methods=["GET"])
 def validate() -> tuple[str, int]:
     """Verify the DN from the packet header against the list of allowed DN."""
-    # dn is ASSUMEd to be sanitized as it comes from NGINX as RFC2253 DN...
-    if not (request_dn := request.headers.get(settings.ssl_client_subject_dn_header)):
-        app.logger.warning(f"no {settings.ssl_client_subject_dn_header} header on HTTP request")
-        return "Forbidden", 403
-    try:
-        # https://werkzeug.palletsprojects.com/en/stable/datastructures/#werkzeug.datastructures.Headers
-        # .get() returns str
-        request_rfc4514_name = rfc4514_cmp.dn_rfc2253_string_to_rfc4514_name(request_dn)
-    except ValueError:
-        app.logger.warning(f"Not a RFC2253 Distinguished Name {request_dn} header in HTTP request")
-        return "Forbidden", 403
-    # Main authentication line
+    # https://werkzeug.palletsprojects.com/en/stable/datastructures/#werkzeug.datastructures.Headers
+    # .get() returns str
+    if settings.tls_client_cert_header:
+        # Get DN from PEM certificate
+        if not (request_cert_str := request.headers.get(settings.tls_client_cert_header)):
+            app.logger.warning(f"no {settings.tls_client_cert_header} header on HTTP request")
+            return "Forbidden", 403
+
+        # If Traefik this is in PEM with some changes, see above
+        if ',' in request_cert_str:
+            app.logger.warning(f"multiple certificates in {settings.tls_client_cert_header} header on HTTP request, unsupported")
+            return "Forbidden", 403
+        request_rfc4514_name = rfc4514_cmp.subject_dn_from_traefik_cert_pem(request_cert_str)
+    else:        
+        # DN is ASSUMEd to be sanitized as it comes from NGINX as RFC2253 DN...
+        if not (request_dn := request.headers.get(settings.tls_client_subject_dn_header)):
+            app.logger.warning(f"no {settings.tls_client_subject_dn_header} header on HTTP request")
+            return "Forbidden", 403
+        try:
+            request_rfc4514_name = rfc4514_cmp.dn_rfc2253_string_to_rfc4514_name(request_dn)
+        except ValueError:
+            app.logger.warning(f"Not a RFC2253 Distinguished Name {request_dn} header in HTTP request")
+            return "Forbidden", 403
+
+
+    # *** Main authentication line ***
     # x509.Name object equals method does comparison
     for allowed_dn_name in state.allowed_client_subject_dn_names:
-        print("COMPARE", request_rfc4514_name, "EXPECT", allowed_dn_name)
+
         if request_rfc4514_name == allowed_dn_name:
-            app.logger.info(f"allow {request_dn}")
+            app.logger.info(f"allow {request_rfc4514_name}")
             return "OK", 200
 
-    app.logger.info(f"deny {request_dn}")
+    app.logger.info(f"deny {request_rfc4514_name}")
     return "Forbidden", 403
 
 

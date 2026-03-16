@@ -8,6 +8,8 @@ from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat._oid import _OID_NAMES
 from cryptography.x509.name import _NAMEOID_TO_NAME
+from cryptography.x509 import load_pem_x509_certificate
+import re
 import sys
 import traceback
 
@@ -122,3 +124,37 @@ def dn_tagvalue_string_to_rfc4514_name(tagvalue_string):
         traceback.print_exc()
         raise ValueError(e)
 
+def subject_dn_from_cert_pem(cert_pem_bytes):
+    """
+
+    Args:
+        cert_pem_str (bytes): PEM framed as per cryptography's rules
+        See https://cryptography.io/en/latest/faq/#why-can-t-i-import-my-pem-file
+
+    Returns:
+        cryptography.x509.Name: Parsed version of Subject DN.
+    Raises:
+        ValueError: If cert_pem_str is not a valid PEM-encoded x.509 certificate.
+    """
+    print("START")
+    print(cert_pem_bytes)
+    print("END")
+    cert_obj = load_pem_x509_certificate(cert_pem_bytes)
+    return cert_obj.subject
+
+
+def subject_dn_from_traefik_cert_pem(traefik_cert_str):
+    """ Convert Traefik minimized, HTTP Header compatible PEM to what
+    cryptography groks
+    See https://cryptography.io/en/latest/faq/#why-can-t-i-import-my-pem-file
+    """
+    delim_pem_cert_str = '-----BEGIN CERTIFICATE-----\n'
+    #base64lines = re.findall('.{64}', traefik_cert_str)
+    n = 64
+    base64lines = [traefik_cert_str[i:i + n] for i in range(0, len(traefik_cert_str), n)]
+    for base64line in base64lines:
+        delim_pem_cert_str += base64line+'\n'
+    delim_pem_cert_str += '-----END CERTIFICATE-----\n'
+
+    delim_pem_cert_bytes = bytes(delim_pem_cert_str, "utf-8")
+    return subject_dn_from_cert_pem(delim_pem_cert_bytes)
