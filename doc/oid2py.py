@@ -9,22 +9,16 @@ skipflag = False
 f = open("oids.txt","rb")
 for line in f:
     # remove comments
-    print("LINE",line)
     for i in range(0,len(line)):
         if line[i:i+1] == b'#':
             break
     commentless = line[:i]
     # remove trailing space
-    #print("LEN",len(commentless),"RANGE",range(len(commentless)-2,0))
     for i in range(len(commentless)-1,-1,-1):
-        #print("COUNT",i)
-        #print("Check",commentless[i:-1])
         if commentless[i:i+1] != b' ':
             break
     commentless = commentless[0:i+1]
-    print("CLEAN",commentless,i)
     prefix_bytes = commentless[0:3]
-    print(prefix_bytes)
 
     if prefix_bytes == b'OID':
         skipflag = False
@@ -34,9 +28,7 @@ for line in f:
         if oidstr.count(".") < 2:
             skipflag = True
 
-        import re
-
-        matchlist = re.findall('[0-9\.]+',oidstr)
+        matchlist = re.findall('[0-9\\.]+',oidstr)
         if len(matchlist) == 1:
             oidbytes = oid[:len(matchlist[0])]
             oidobj = b'ObjectIdentifier("'+oidbytes+b'")'
@@ -44,13 +36,11 @@ for line in f:
             raise Exception("OID not digits:" + oidstr + " " + str(matchlist))
     elif not skipflag and prefix_bytes == b'TAG':
         unofficial_but_common_name = commentless[4:] # excluding \n
-        print("UNOFF",unofficial_but_common_name)
         # add quotes
         quoted_name = b'"'+unofficial_but_common_name+b'"'
         name2oid[quoted_name] = oidobj
     elif not skipflag and prefix_bytes == b'ATT':
         attr = commentless[5:] # excluding \n
-        print("ATTR",attr)
         name2oid[attr] = oidobj
 
 f.close()

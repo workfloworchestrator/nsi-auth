@@ -53,3 +53,14 @@ def test_validate_wrong_order_dn_header(client: FlaskClient) -> None:
     }
     response = client.get("/validate", headers=headers)
     assert response.status_code == 403
+
+def test_validate_with_unauthorized_escaped_dn_header(client: FlaskClient) -> None:
+    """Verify that the /validate endpoint returns 403 with header with a correct but unauthorized DN containing escapes."""
+    # According to https://datatracker.ietf.org/doc/html/rfc4517#section-3.3.4
+    # Country is "the two-character codes from ISO 3166". ZZ is a user-assigned element :-)
+    # https://www.iso.org/obp/ui/#iso:pub:PUB500001:en
+    headers = {
+        "ssl-client-subject-dn": "CN=CertA,OU=Dept\\,X,O=Company Y,C=ZZ",
+    }
+    response = client.get("/validate", headers=headers)
+    assert response.status_code == 403

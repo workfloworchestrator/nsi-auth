@@ -12,7 +12,7 @@
 #  limitations under the License.
 #
 # TODO:
-# - Support other HTTP proxies than NGINX, most can send full cert.
+# - Support other HTTP proxies than NGINX + Traefik, most can send full cert.
 #
 """Verify DN from HTTP header against list of allowed DN's."""
 import threading
@@ -150,6 +150,7 @@ def validate() -> tuple[str, int]:
     # *** Main authentication line ***
     # x509.Name object equals method does comparison
     for allowed_dn_name in state.allowed_client_subject_dn_names:
+
         if request_rfc4514_name == allowed_dn_name:
             app.logger.info(f"allow {request_rfc4514_name}")
             return "OK", 200
@@ -237,7 +238,7 @@ def load_allowed_client_dn(filepath: FilePath) -> None:
             else:
                 new_allowed_client_subject_dn_names.append(rfc4514_name)
 
-        # Does this work?
+        # Detect change in persistent state vs run-time
         if state.allowed_client_subject_dn_names != new_allowed_client_subject_dn_names:
             state.allowed_client_subject_dn_names = new_allowed_client_subject_dn_names
             app.logger.info(f"load {len(new_allowed_client_subject_dn_names)} DN from {filepath}")
