@@ -1,4 +1,4 @@
-FROM python:3.13-alpine
+FROM python:3.14-alpine
 WORKDIR /nsi_auth
 COPY pyproject.toml .
 RUN pip --no-cache-dir install .
