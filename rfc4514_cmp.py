@@ -4,9 +4,9 @@
 #
 import re
 from cryptography import x509
-from cryptography.x509.oid import NameOID
+from cryptography.x509.oid import ObjectIdentifier, NameOID
 from cryptography.x509 import load_pem_x509_certificate
-
+import traceback
 
 # Example: openssl x509 -nameopt RFC2253 -text output:
 #     "CN=University Corporation For Advanced Internet Development,emailAddress=knewell@internet2.edu,organizationIdentifier=NTRUS\\+MI-801069584,O=University Corporation For Advanced Internet Development,ST=Michigan,C=US"
@@ -15,15 +15,15 @@ from cryptography.x509 import load_pem_x509_certificate
 # So do a workaround where we pass a complete list of name-to-OID mappings to the parser
 # to fix any MAYs
 
-# Official X500 OID-to-name mappings are not available. Use a Mozilla compiled list, converted
-# by our own script:
-from name2oid import names2oid
-# Reverse for cryptography's internal swapping of names for OIDs, which breaks comparisons
-_oid2names = {v: k for k, v in names2oid.items()}
+#
+# Omissions cryptography's OIDs
+#
+names2oid = {}
+names2oid["sn"] = ObjectIdentifier("2.5.4.4")  # surname
+names2oid["gn"] = ObjectIdentifier("2.5.4.42") # givenname
+names2oid["organizationIdentifier"] = ObjectIdentifier("2.5.4.97")
+names2oid["emailAddress"] = ObjectIdentifier("1.2.840.113549.1.9.1")
 
-
-# https://datatracker.ietf.org/doc/html/rfc4514#section-2.4
-_escaped_chars = [' ', '"', '#', '+', ',', ';', '<', '=', '>','\\' ]
 
 def dn_rfc2253_string_to_rfc4514_name(rfc2253_string:str):
     """
@@ -44,19 +44,6 @@ def dn_rfc2253_string_to_rfc4514_name(rfc2253_string:str):
     return x509.Name.from_rfc4514_string(rfc2253_string,names2oid)
 
 
-
-
-def parse_tag_value_string(text):
-    """Parse comma-separated tag=value pairs, returning ordered list.
-    @blame: confer.to"""
-    pattern = r'([^,=]+)=((?:[^,\\]|\\.)*)'
-
-    def unescape(s):
-        return s.replace('\\,', ',').replace('\\\\', '\\')
-
-    return [(tag, unescape(value)) for tag, value in re.findall(pattern, text)]
-
-
 def dn_tagvalue_string_to_rfc4514_name(tagvalue_string:str):
     """
         Convert a string in "tag1=value1,tag2=value2" format, that should represent
@@ -73,60 +60,30 @@ def dn_tagvalue_string_to_rfc4514_name(tagvalue_string:str):
         Raises:
             ValueError: If tagvalue_string is not a valid DN.
     """
-    try:
-        tvs = parse_tag_value_string(tagvalue_string)
-        rdns = []
-        oidlist = []
-        for tag_string, value_string in tvs:
-            tag_string = tag_string.strip()
-            value_string = value_string.strip()
+    rfc454_name = dn_rfc2253_string_to_rfc4514_name(tagvalue_string)
+    oidlist = []
+    # Copy RDNS
+    rdns = list(rfc454_name)
+    for rdn in rdns:
+        oidlist.append(rdn.oid)
 
-            # Check if there are any escapes, and remove them before cryptography adds them again.
-            for c in _escaped_chars:
-                esc_str = '\\'+c
-                if esc_str in value_string:
-                    value_string = value_string.replace(esc_str, c)
+    # cryptography does not fix order, so if input was big-to-small this is not fixed automatically
+    # note that big-to-small is the internal representation.
+    firstoid = oidlist[0]
+    lastoid = oidlist[-1]
+    bigtosmall = True
+    # Heuristic to determine order. These two fields MUST be "recognized"
+    # https://datatracker.ietf.org/doc/html/rfc4514#section-3
+    if firstoid == NameOID.COMMON_NAME:
+        bigtosmall = False
+    elif lastoid == NameOID.COUNTRY_NAME:
+        bigtosmall = False
+    if not bigtosmall:
+        rdns.reverse()
 
-            if tag_string not in names2oid:
-                # https://datatracker.ietf.org/doc/html/rfc4512#section-1.4
-                # "Short names, also known as descriptors, are used as more readable
-                #  aliases for object identifiers.  Short names are case insensitive"
-                # _name2oid is in lower-case.
-                tag_string = tag_string.lower()
-            oid =  names2oid[tag_string]
-            oidlist.append(oid)
+    n = x509.Name(rdns)
+    return n
 
-            # Cannot pass symbolic name, so Name with "GN" will not be equal to Name
-            # with NameOID.GIVEN_NAME (1.xxx) :-(   Fix below
-            na = x509.NameAttribute(oid,value_string)
-            rdn = x509.RelativeDistinguishedName([na])
-            rdns.append(rdn)
-
-        # cryptography does not fix order, so if input was big-to-small this is not fixed automatically
-        # note that big-to-small is the internal representation.
-        firstoid = oidlist[0]
-        lastoid = oidlist[-1]
-        bigtosmall = True
-        # Heuristic to determine order. These two fields MUST be "recognized"
-        # https://datatracker.ietf.org/doc/html/rfc4514#section-3
-        if firstoid == NameOID.COMMON_NAME:
-            bigtosmall = False
-        elif lastoid == NameOID.COUNTRY_NAME:
-            bigtosmall = False
-        if not bigtosmall:
-            rdns.reverse()
-
-        n = x509.Name(rdns)
-        # Hack to convert tag OIDs to symbolic names
-        rfc4514_string = n.rfc4514_string(_oid2names)
-        n = x509.Name.from_rfc4514_string(rfc4514_string,names2oid)
-        return n
-    except ValueError as e:
-        # Repeat ValueErrors from cryptography
-        raise e
-    except Exception as e:
-        # Turn other errors into ValueErrors
-        raise ValueError(e)
 
 def subject_dn_from_cert_pem(cert_pem_bytes:str):
     """
