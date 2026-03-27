@@ -8,15 +8,17 @@ from cryptography.x509.oid import ObjectIdentifier, NameOID
 from cryptography.x509 import load_pem_x509_certificate
 import traceback
 
+# Omissions cryptography's OIDs
+# Previous code tried to fix this by using a Mozilla compiled list of OIDs, oids.txt in:
+#     https://ftp.mozilla.org/pub/security/nss/releases/NSS_3_12_3_1_RTM/src/nss-3.12.3.1.tar.gz
+# but that contained duplicate tags for different OIDs. So we just stick to
+# what cryptography knows, with some known ommissions, and be less flexible to
+# what the administrator put in the allowed_client_subject_dn_path file.
+#
 # Example: openssl x509 -nameopt RFC2253 -text output:
 #     "CN=University Corporation For Advanced Internet Development,emailAddress=knewell@internet2.edu,organizationIdentifier=NTRUS\\+MI-801069584,O=University Corporation For Advanced Internet Development,ST=Michigan,C=US"
 # According to https://datatracker.ietf.org/doc/html/rfc4514#page-7 'emailAddress' is not a MUST,
 # nor is 'organizationIdentifier'. cryptography package doesn't do MAY
-# So do a workaround where we pass a complete list of name-to-OID mappings to the parser
-# to fix any MAYs
-
-#
-# Omissions cryptography's OIDs
 #
 names2oid = {}
 names2oid["sn"] = ObjectIdentifier("2.5.4.4")  # surname
@@ -50,7 +52,7 @@ def dn_tagvalue_string_to_rfc4514_name(tagvalue_string:str):
         a valid DistinguishedName into a cryptography.x509.Name object, if it can be parsed
         by the cryptography code. tags (symbolic names, not oids) are taken from the set
         of valid DN tags as defined by cryptography, with e.g. "organizationIdentifier" added,
-        see .py.
+        see above.
 
         Args:
             tagvalue_string (str): comma-separated tag-value DN
