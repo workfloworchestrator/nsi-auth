@@ -6,7 +6,21 @@ import re
 from cryptography import x509
 from cryptography.x509.oid import ObjectIdentifier, NameOID
 from cryptography.x509 import load_pem_x509_certificate
-import traceback
+
+# OID not included in cryptography.x509.oid.NameOID
+OID_ORGANIZATION_IDENTIFIER = ObjectIdentifier("2.5.4.97")
+
+_OID_SHORT_NAMES = {
+    NameOID.COUNTRY_NAME: "C",
+    NameOID.STATE_OR_PROVINCE_NAME: "ST",
+    NameOID.LOCALITY_NAME: "L",
+    NameOID.ORGANIZATION_NAME: "O",
+    NameOID.ORGANIZATIONAL_UNIT_NAME: "OU",
+    NameOID.COMMON_NAME: "CN",
+    NameOID.SERIAL_NUMBER: "serialNumber",
+    NameOID.EMAIL_ADDRESS: "emailAddress",
+    OID_ORGANIZATION_IDENTIFIER: "organizationIdentifier",
+}
 
 # Omissions cryptography's OIDs
 # Previous code tried to fix this by using a Mozilla compiled list of OIDs, oids.txt in:
@@ -23,7 +37,7 @@ import traceback
 names2oid = {}
 names2oid["sn"] = ObjectIdentifier("2.5.4.4")  # surname
 names2oid["gn"] = ObjectIdentifier("2.5.4.42") # givenname
-names2oid["organizationIdentifier"] = ObjectIdentifier("2.5.4.97")
+names2oid["organizationIdentifier"] = OID_ORGANIZATION_IDENTIFIER
 names2oid["emailAddress"] = ObjectIdentifier("1.2.840.113549.1.9.1")
 
 
@@ -110,7 +124,6 @@ def subject_dn_from_traefik_cert_pem(traefik_cert_str):
     See https://cryptography.io/en/latest/faq/#why-can-t-i-import-my-pem-file
     """
     delim_pem_cert_str = '-----BEGIN CERTIFICATE-----\n'
-    #base64lines = re.findall('.{64}', traefik_cert_str)
     n = 64
     base64lines = [traefik_cert_str[i:i + n] for i in range(0, len(traefik_cert_str), n)]
     for base64line in base64lines:
@@ -122,3 +135,59 @@ def subject_dn_from_traefik_cert_pem(traefik_cert_str):
     delim_pem_cert_bytes = bytes(delim_pem_cert_str, "iso-8859-1")
     s = subject_dn_from_cert_pem(delim_pem_cert_bytes)
     return s
+
+
+def _escape_dn_value(value: str) -> str:
+    """Escape special characters in a DN attribute value per RFC 4514."""
+    value = value.replace("\\", "\\\\")
+    for ch in (",", "+", '"', "<", ">", ";"):
+        value = value.replace(ch, f"\\{ch}")
+    if value.startswith("#"):
+        value = "\\" + value
+    if value.startswith(" "):
+        value = "\\ " + value[1:]
+    if value.endswith(" "):
+        value = value[:-1] + "\\ "
+    return value
+
+# Arno: Currently unused, pem_str does not contain ---BEGIN--- delimiters, according
+# to Traefik docs.
+def subject_dn_from_traefik_cert_karl(header_value: str) -> str | None:
+    """Extract DN from Traefik's X-Forwarded-Tls-Client-Cert header (URL-encoded PEM).
+
+    Parses the full certificate to access all subject fields including
+    organizationIdentifier (OID 2.5.4.97) and emailAddress (OID 1.2.840.113549.1.9.1).
+    Returns a normalized DN string in DER field order, or None on parse failure.
+    """
+    try:
+        # Traefik strips newlines from the PEM before URL-encoding (to prevent header injection),
+        # so load_pem_x509_certificate would fail on the re-assembled string. Instead, extract
+        # the base64 between the PEM markers and load as DER.
+        # Use unquote (not unquote_plus) to preserve '+' characters valid in base64.
+        pem_str = unquote(header_value)
+        b64 = re.sub(r"-----[^-]+-----", "", pem_str).replace(" ", "")
+        cert = x509.load_der_x509_certificate(base64.b64decode(b64))
+    except Exception as e:
+        app.logger.warning(f"failed to parse PEM from X-Forwarded-Tls-Client-Cert: {e!s}")
+        return None
+
+    parts = [
+        f"{rfc4514_cmp._OID_SHORT_NAMES.get(attr.oid, attr.oid.dotted_string)}={_escape_dn_value(attr.value)}"
+        for attr in cert.subject
+    ]
+    return ",".join(parts)
+
+
+def subject_dn_from_traefik_cert_info(header_value: str) -> str | None:
+    """Extract DN from Traefik's X-Forwarded-Tls-Client-Cert-Info header.
+
+    Traefik format: Subject="CN=...,O=...,C=..."
+    Returns the DN string without the Subject="" wrapper, or None if not found.
+    """
+    # Match Subject="..." pattern and extract the DN
+    # Traefik URL-encodes the header value, so decode it first
+    match = re.search(r'Subject="([^"]+)"', unquote_plus(header_value))
+    if match:
+        return match.group(1)
+    return None
+

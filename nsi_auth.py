@@ -18,14 +18,52 @@
 import threading
 from logging.config import dictConfig
 from typing import Callable
-
+from urllib.parse import unquote, unquote_plus
+from cryptography import x509
 from flask import Flask, request
 from pydantic import BaseModel, FilePath
 from pydantic_settings import BaseSettings
 from watchdog.events import FileModifiedEvent, FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
-from cryptography import x509
+
 import rfc4514_cmp
+
+# Client TLS certificate Subject DistinguishedName as HTTPS Header:
+# -----------------------------------------------------------------
+# Kubernetes ingress NGINX's annotation: https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/nginx-configuration/annotations.md
+# defined as 'The subject information of the client certificate. Example: "CN=My Client"'
+# If we ASSUME this is the $ssl_client_s_dn variable from ngx_http_ssl_module then this is
+# defined as (https://nginx.org/en/docs/http/ngx_http_ssl_module.html):
+# '$ssl_client_s_dn' returns the “subject DN” string of the client certificate for an
+#  established SSL connection according to RFC 2253 (1.11.6);'
+# So RFC2253 format. Note that itself is obsoleted by RFC4514, so NGINX has work to do.
+#
+K8S_NGINX_TLS_CLIENT_SUBJECT_DN_HEADER = "ssl-client-subject-dn"
+
+# Full Client TLS certificate as HTTPS Header:
+# --------------------------------------------
+# For Traefik:
+# * https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/passtlsclientcert/
+# * ``that contains the pem.''
+# * https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/passtlsclientcert/#pem
+# * ``The delimiters and \n will be removed.
+# * If there are more than one certificate, they are separated by a ",".''
+# * More elaborate:
+# * https://doc.traefik.io/traefik/v2.1/middlewares/passtlsclientcert/
+# * ``In the example, it is the part between -----BEGIN CERTIFICATE----- and -----END CERTIFICATE----- delimiters :''
+#
+# * k8s ingress Traefik uses this header, see https://doc.traefik.io/traefik/v1.7/configuration/backends/kubernetes/#general-annotations
+# ARNOTODO: find out if Traefik will send multiple certs if a chain is presented, see e.g.
+# Internet2's example PEM cert (or is that some form of key chain / key store)
+
+K8S_TRAEFIK_TLS_CLIENT_CERT_HEADER = "X-Forwarded-Tls-Client-Cert"
+
+# Traefik can also send the subject info from the cert:
+# * https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/passtlsclientcert/
+# * ``X-Forwarded-Tls-Client-Cert-Info header value is a string that has been escaped in order to be a valid URL query.''
+#
+K8S_TRAEFIK_TLS_CLIENT_SUBJECT_DN_HEADER = "X-Forwarded-Tls-Client-Cert-Info"
+
 
 #
 # Authorization application
@@ -37,37 +75,9 @@ class Settings(BaseSettings):
     # flexibly. File MUST be in UTF-8 encoding, following RFC4514.
     allowed_client_subject_dn_path: FilePath = FilePath("/config/allowed_client_dn.txt")
 
-    # Client TLS certificate Subject DistinguishedName as HTTPS Header:
-    # -----------------------------------------------------------------
-    # Kubernetes ingress NGINX's annotation: https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/nginx-configuration/annotations.md
-    # defined as 'The subject information of the client certificate. Example: "CN=My Client"'
-    # If we ASSUME this is the $ssl_client_s_dn variable from ngx_http_ssl_module then this is
-    # defined as (https://nginx.org/en/docs/http/ngx_http_ssl_module.html):
-    # '$ssl_client_s_dn' returns the “subject DN” string of the client certificate for an
-    #  established SSL connection according to RFC 2253 (1.11.6);'
-    # So RFC2253 format. Note that itself is obsoleted by RFC4514, so NGINX has work to do.
-    #
-    tls_client_subject_dn_header: str = "ssl-client-subject-dn"
-
-    # Full Client TLS certificate as HTTPS Header:
-    # --------------------------------------------
-    # For Traefik:
-    # * https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/passtlsclientcert/
-    # * ``that contains the pem.''
-    # * https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/passtlsclientcert/#pem
-    # * ``The delimiters and \n will be removed.
-    # * If there are more than one certificate, they are separated by a ",".''
-    # * More elaborate:
-    # * https://doc.traefik.io/traefik/v2.1/middlewares/passtlsclientcert/
-    # * ``In the example, it is the part between -----BEGIN CERTIFICATE----- and -----END CERTIFICATE----- delimiters :''
-    #
-    # * k8s ingress Traefik uses this header, see https://doc.traefik.io/traefik/v1.7/configuration/backends/kubernetes/#general-annotations
-    # ARNOTODO: find out if Traefik will send multiple certs if a chain is presented, see e.g.
-    # Internet2's example PEM cert (or is that some form of key chain / key store)
-    tls_client_cert_header: str = "X-Forwarded-Tls-Client-Cert"
-
-    # Do we look at DN or at FullCert for client authentication?
-    tls_use_cert_header: bool = True
+    # This setting determines behaviour, one of K8S*_HEADER, see above.
+    # If a cert header, then we check using full cert, otherwise passed subject DN.
+    tls_client_subject_authn_header: str = K8S_NGINX_TLS_CLIENT_SUBJECT_DN_HEADER
 
     use_watchdog: bool = False
     log_level: str = "INFO"
@@ -114,48 +124,86 @@ settings = Settings()
 state = State()
 app = init_app()
 
+
+def get_client_dn() -> tuple[str | None, str]:
+    """Extract client DN from request headers.
+
+    Priority order:
+    1. X-Forwarded-Tls-Client-Cert (Traefik PEM - all subject fields)
+    2. X-Forwarded-Tls-Client-Cert-Info (Traefik Info - limited fields)
+    3. ssl-client-subject-dn (nginx fallback)
+
+    Returns:
+        Tuple of (x509.Name, source) where source indicates which header was used.
+
+    Raises:
+        ValueError: If DN is not valid.
+    """
+    try:
+        # https://werkzeug.palletsprojects.com/en/stable/datastructures/#werkzeug.datastructures.Headers
+        # .get() returns str
+
+        # Risk: if ingress does DN header, and malicous actor sends cert header, and the
+        # proxy does not strip it, we would trust the cert header. So check only the
+        # header from settings.
+        #
+        authn_header_val = request.headers.get(settings.tls_client_subject_authn_header)
+        if not authn_header_val:
+            return None, f"Missing authorization header: {settings.tls_client_subject_authn_header}"
+
+        if settings.tls_client_subject_authn_header == K8S_TRAEFIK_TLS_CLIENT_CERT_HEADER:
+            # If Traefik this is in PEM with some changes, see above
+            if ',' in authn_header_val:
+                app.logger.warning(
+                    f"multiple certificates in {K8S_TRAEFIK_TLS_CLIENT_CERT_HEADER} header on HTTP request, unsupported")
+                return None, "traefik-pem-multiple-certificates"
+
+            dn = rfc4514_cmp.subject_dn_from_traefik_cert_pem(authn_header_val)
+            if dn:
+                return dn, "traefik-pem"
+
+        elif settings.tls_client_subject_authn_header == K8S_TRAEFIK_TLS_CLIENT_SUBJECT_DN_HEADER:
+            dn = rfc4514_cmp.subject_dn_from_traefik_cert_info(authn_header_val)
+            if dn:
+                return dn, "traefik-info"
+
+        elif settings.tls_client_subject_authn_header == K8S_NGINX_TLS_CLIENT_SUBJECT_DN_HEADER:
+            dn = rfc4514_cmp.dn_rfc2253_string_to_rfc4514_name(authn_header_val)
+            if dn:
+                return dn, "nginx"
+        else:
+            # Default no name, higher layer logs and sends 403.
+            return None, "none"
+
+    except ValueError as e:
+            return None, str(e)
+
+
 @app.route("/validate", methods=["GET"])
 def validate() -> tuple[str, int]:
     """Verify the DN from the packet header against the list of allowed DN."""
-    # https://werkzeug.palletsprojects.com/en/stable/datastructures/#werkzeug.datastructures.Headers
-    # .get() returns str
+    request_rfc4514_name, source = get_client_dn()
 
-    if settings.tls_use_cert_header:
-        # Get DN from PEM certificate
-        if not (request_cert_str := request.headers.get(settings.tls_client_cert_header)):
-            app.logger.warning(f"no {settings.tls_client_cert_header} header on HTTP request")
-            return "Forbidden", 403
+    t = type(request_rfc4514_name)
+    r = repr(request_rfc4514_name)
+    app.logger.info(f"ARNO: type is {t} repr {r} source {source}" )
 
-        # If Traefik this is in PEM with some changes, see above
-        if ',' in request_cert_str:
-            app.logger.warning(f"multiple certificates in {settings.tls_client_cert_header} header on HTTP request, unsupported")
-            return "Forbidden", 403
-        try:
-            request_rfc4514_name = rfc4514_cmp.subject_dn_from_traefik_cert_pem(request_cert_str)
-        except ValueError:
-            app.logger.warning(f"Not a properly encoded certificate in {settings.tls_client_cert_header} header in HTTP request")
-            return "Forbidden", 403
-    else:
-        # DN is ASSUMEd to be sanitized as it comes from NGINX as RFC2253 DN...
-        if not (request_dn := request.headers.get(settings.tls_client_subject_dn_header)):
-            app.logger.warning(f"no {settings.tls_client_subject_dn_header} header on HTTP request")
-            return "Forbidden", 403
-        try:
-            request_rfc4514_name = rfc4514_cmp.dn_rfc2253_string_to_rfc4514_name(request_dn)
-        except ValueError:
-            app.logger.warning(f"Not a RFC2253 Distinguished Name {request_dn} header in HTTP request")
-            return "Forbidden", 403
-
+    if request_rfc4514_name is None:
+        app.logger.warning(
+            f"no client DN found in headers (tried X-Forwarded-Tls-Client-Cert, "
+            f"X-Forwarded-Tls-Client-Cert-Info, {K8S_NGINX_TLS_CLIENT_SUBJECT_DN_HEADER})"
+        )
+        return "Forbidden", 403
 
     # *** Main authentication line ***
     # x509.Name object equals method does comparison
     for allowed_dn_name in state.allowed_client_subject_dn_names:
 
         if request_rfc4514_name == allowed_dn_name:
-            app.logger.info(f"allow {request_rfc4514_name}")
+            app.logger.info(f"allow {request_rfc4514_name} (from {source} header)")
             return "OK", 200
 
-    app.logger.info(f"deny {request_rfc4514_name}")
+    app.logger.info(f"deny {request_rfc4514_name} (from {source} header)")
     return "Forbidden", 403
 
 
