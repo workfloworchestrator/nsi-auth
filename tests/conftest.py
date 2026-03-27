@@ -13,7 +13,6 @@
 import datetime
 from collections.abc import Generator
 from pathlib import Path
-from urllib.parse import quote_plus
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -89,9 +88,9 @@ def test_cert_dn() -> str:
 
 @fixture(scope="session")
 def pem_header_value(test_cert: x509.Certificate) -> str:
-    """Traefik-encoded X-Forwarded-Tls-Client-Cert header value for test_cert.
+    """Traefik X-Forwarded-Tls-Client-Cert header value for test_cert.
 
-    Traefik strips newlines from the PEM then URL-encodes the result.
+    Traefik sends raw base64 DER with no PEM markers and no URL-encoding.
     """
-    pem = test_cert.public_bytes(serialization.Encoding.PEM).decode("ascii")
-    return quote_plus(pem.replace("\n", "").replace("\r", ""))
+    import base64
+    return base64.b64encode(test_cert.public_bytes(serialization.Encoding.DER)).decode("ascii")

@@ -17,7 +17,7 @@ import re
 import threading
 from logging.config import dictConfig
 from typing import Callable
-from urllib.parse import unquote_plus
+from urllib.parse import unquote, unquote_plus
 
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -109,6 +109,27 @@ def _escape_dn_value(value: str) -> str:
     return value
 
 
+def _first_der_cert(data: bytes) -> bytes:
+    """Return just the first DER certificate from potentially concatenated DER bytes.
+
+    Certificates are ASN.1 SEQUENCE structures (tag 0x30). Reads the length from the
+    tag+length header to slice off exactly the first cert and discard the rest.
+    """
+    if not data or data[0] != 0x30:
+        raise ValueError("not an ASN.1 SEQUENCE")
+    idx = 1
+    b = data[idx]
+    if b & 0x80 == 0:
+        length = b
+        idx += 1
+    else:
+        n = b & 0x7F
+        idx += 1
+        length = int.from_bytes(data[idx : idx + n], "big")
+        idx += n
+    return data[: idx + length]
+
+
 def extract_dn_from_pem_header(header_value: str) -> str | None:
     """Extract DN from Traefik's X-Forwarded-Tls-Client-Cert header (URL-encoded PEM).
 
@@ -117,18 +138,17 @@ def extract_dn_from_pem_header(header_value: str) -> str | None:
     Returns a normalized DN string in DER field order, or None on parse failure.
     """
     try:
-        # Traefik strips newlines from the PEM before URL-encoding (to prevent header injection),
-        # so load_pem_x509_certificate would fail on the re-assembled string. Instead, extract
-        # the base64 between the PEM markers and load as DER.
-        # unquote_plus is correct: Traefik uses url.QueryEscape which encodes spaces as '+' and
-        # base64 '+' as '%2B', so unquote_plus safely reverses both.
-        pem_str = unquote_plus(header_value)
-        # Traefik may pass the full chain; extract only the first cert's base64.
+        # Use unquote (not unquote_plus) to preserve literal '+' which is valid in base64.
+        # Traefik sends raw base64 DER without PEM markers or URL-encoding, but unquote
+        # handles any %XX sequences if ever present.
+        pem_str = unquote(header_value)
+        # Support both raw base64 (Traefik) and PEM-wrapped base64.
         match = re.search(r"-----BEGIN CERTIFICATE-----([^-]*)-----END CERTIFICATE-----", pem_str)
-        if not match:
-            raise ValueError("no PEM certificate block found")
-        b64 = match.group(1).replace(" ", "")
-        cert = x509.load_der_x509_certificate(base64.b64decode(b64))
+        b64 = match.group(1) if match else pem_str
+        # Strip whitespace, then extract only the first cert — Traefik may send the full chain
+        # as concatenated DER bytes with no markers or separators between certs.
+        raw = base64.b64decode(b64.replace(" ", "").replace("\n", "").replace("\r", ""))
+        cert = x509.load_der_x509_certificate(_first_der_cert(raw))
     except Exception as e:
         app.logger.warning(f"failed to parse PEM from X-Forwarded-Tls-Client-Cert: {e!s}")
         return None

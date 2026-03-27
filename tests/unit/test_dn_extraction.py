@@ -157,13 +157,11 @@ def test_pem_header_cert_chain_uses_first_cert(
     """When header contains a chain, only the first cert's DN is returned."""
     from nsi_auth import extract_dn_from_pem_header
 
-    pem = test_cert.public_bytes(serialization.Encoding.PEM).decode("ascii")
-    pem_no_newlines = pem.replace("\n", "").replace("\r", "")
-    # Two certs concatenated (same cert twice simulates a chain)
-    chain = pem_no_newlines + pem_no_newlines
-    encoded = quote_plus(chain)
+    # Traefik sends concatenated raw DER bytes, base64-encoded, no markers
+    der = test_cert.public_bytes(serialization.Encoding.DER)
+    chain_b64 = base64.b64encode(der + der).decode("ascii")
 
-    dn = extract_dn_from_pem_header(encoded)
+    dn = extract_dn_from_pem_header(chain_b64)
     assert dn is not None
     assert "CN=Test Client" in dn
 
@@ -175,11 +173,10 @@ def test_pem_header_garbage_returns_none(application: object) -> None:  # noqa: 
 
 
 def test_pem_header_valid_base64_but_not_cert(application: object) -> None:  # noqa: ARG001
-    """Valid base64 wrapped in PEM markers but not a cert returns None."""
+    """Valid base64 that is not a DER certificate returns None."""
     from nsi_auth import extract_dn_from_pem_header
 
-    fake = quote_plus("-----BEGIN CERTIFICATE-----" + base64.b64encode(b"garbage").decode() + "-----END CERTIFICATE-----")
-    assert extract_dn_from_pem_header(fake) is None
+    assert extract_dn_from_pem_header(base64.b64encode(b"not a cert").decode()) is None
 
 
 @pytest.mark.parametrize("value", ["", "   ", "%ZZ"])
