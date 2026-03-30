@@ -76,7 +76,11 @@ def dn_tagvalue_string_to_rfc4514_name(tagvalue_string:str):
         Raises:
             ValueError: If tagvalue_string is not a valid DN.
     """
-    rfc454_name = dn_rfc2253_string_to_rfc4514_name(tagvalue_string)
+    # Handle case when administrator copy-pastes subject DN from openssl x509 -text call
+    # but without -nameopt rfc2253. This means extra spaces and no escaped special chars.
+    clean_tagvalue_string = confer_parse_tag_pairs(tagvalue_string)
+
+    rfc454_name = dn_rfc2253_string_to_rfc4514_name(clean_tagvalue_string)
     oidlist = []
     # Copy RDNS
     rdns = list(rfc454_name)
@@ -99,6 +103,114 @@ def dn_tagvalue_string_to_rfc4514_name(tagvalue_string:str):
 
     n = x509.Name(rdns)
     return n
+
+
+# Arno talking to confer.to:
+def confer_parse_tag_pairs(input_string):
+        r"""
+        Parse a string of tag=value pairs with various separators
+        (commas, spaces, or both) and normalize to just commas.
+        Values are properly escaped according to RFC 4514 in the output.
+        Order is preserved.
+
+        RFC 4514 escaping rules for values:
+        - Must escape: , + " # < > ; = \
+        - Leading/trailing spaces must be escaped
+        - Embedded spaces do NOT need escaping
+
+        Input may have mixed or no escaping; output will be consistently
+        escaped per RFC 4514.
+
+        Args:
+            input_string: String containing tag=value pairs
+                          (e.g., "tag1=val+ue1, tag2=val\\,ue2")
+
+        Returns:
+            String with tag=value pairs separated only by commas,
+            values properly escaped per RFC 4514, order preserved
+        """
+        import re
+
+        def unescape_value(value):
+            """
+            Unescape RFC 4514 escaped sequences in a value.
+            Converts \\X back to X for escaped characters.
+            """
+            result = []
+            i = 0
+            while i < len(value):
+                if value[i] == '\\' and i + 1 < len(value):
+                    # Escaped character - take the next char literally
+                    result.append(value[i + 1])
+                    i += 2
+                else:
+                    result.append(value[i])
+                    i += 1
+            return ''.join(result)
+
+        def escape_rfc4514(value):
+            """
+            Escape a value according to RFC 4514 section 2.4.
+
+            Characters that must be escaped with backslash:
+            - Special chars: , + " # < > ; = \
+            - Leading space (if first char)
+            - Trailing space (if last char)
+            """
+            if not value:
+                return value
+
+            # Characters that always need escaping
+            special_chars = {
+                ',': '\\,',
+                '+': '\\+',
+                '"': '\\"',
+                '#': '\\#',
+                '<': '\\<',
+                '>': '\\>',
+                ';': '\\;',
+                '=': '\\=',
+                '\\': '\\\\',
+            }
+
+            result = []
+            for i, char in enumerate(value):
+                if char in special_chars:
+                    result.append(special_chars[char])
+                elif char == ' ':
+                    # Space: only escape if leading or trailing
+                    if i == 0 or i == len(value) - 1:
+                        result.append('\\ ')
+                    else:
+                        result.append(char)
+                else:
+                    result.append(char)
+
+            return ''.join(result)
+
+        input_string = input_string.strip()
+
+        if not input_string:
+            return ""
+
+        # Pattern to match tag=value pairs
+        # Tag: one or more chars that aren't whitespace, comma, or equals
+        # Value: escaped chars (\\.) OR any char except equals, comma, backslash
+        pattern = r'([^\s,=]+)=((?:\\.|[^=,\\])*)(?=\s*,?\s*[^\s,=]+=|$)'
+
+        matches = re.findall(pattern, input_string, re.DOTALL)
+
+        if not matches:
+            return input_string
+
+        # Unescape input values, then re-escape per RFC 4514
+        result = ','.join(
+            f'{tag}={escape_rfc4514(unescape_value(value))}'
+            for tag, value in matches
+        )
+
+        return result
+#EOAI
 
 
 def subject_dn_from_cert_pem(cert_pem_bytes:str):

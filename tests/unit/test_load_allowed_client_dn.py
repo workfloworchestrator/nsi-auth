@@ -145,7 +145,7 @@ def test_load_escaped_dn_from_file(client: FlaskClient, allowed_client_dn: Path)
     """Verify that DN with escapes are loaded from the configured file."""
     from nsi_auth import state, load_allowed_client_dn
 
-    data = "CN=University Corporation For Advanced Internet Development,emailAddress=johndoe@internet2.edu,organizationIdentifier=NTRUS\+MI-801069584,O=University Corporation For Advanced Internet Development,ST=Michigan,C=US"
+    data = "CN=University Corporation For Advanced Internet Development,emailAddress=johndoe@internet2.edu,organizationIdentifier=NTRUS\\+MI-801069584,O=University Corporation For Advanced Internet Development,ST=Michigan,C=US"
     allowed_client_dn.write_text(data+"\n", encoding="utf-8")
     load_allowed_client_dn(allowed_client_dn)
     a_name = rfc4514_cmp.dn_rfc2253_string_to_rfc4514_name(data)
@@ -157,11 +157,11 @@ def test_load_reversed_dn_from_file(client: FlaskClient, allowed_client_dn: Path
     """Verify that DN in wrong order are loaded from the configured file."""
     from nsi_auth import state, load_allowed_client_dn
 
-    data = "CN=University Corporation For Advanced Internet Development,emailAddress=johndoe@internet2.edu,organizationIdentifier=NTRUSMI-801069584,O=University Corporation For Advanced Internet Development,ST=Michigan,C=US"
+    data = 'CN=University Corporation For Advanced Internet Development,emailAddress=johndoe@internet2.edu,organizationIdentifier=NTRUS\\+MI-801069584,O=University Corporation For Advanced Internet Development,ST=Michigan,C=US'
     # TODO: cryptography doesn't grok spaces after the commas.
     # These spaces are there when the admin uses openssl x509 -in bla.pem -txt without -nameopt rfc2253, so will be a common mistake
     # Without -nameopt, openssl also does not escape special characters.
-    revdata = "C=US,ST=Michigan,O=University Corporation For Advanced Internet Development,organizationIdentifier=NTRUSMI-801069584,emailAddress=johndoe@internet2.edu,CN=University Corporation For Advanced Internet Development"
+    revdata = "C=US, ST=Michigan, O=University Corporation For Advanced Internet Development, organizationIdentifier=NTRUS+MI-801069584, emailAddress=johndoe@internet2.edu, CN=University Corporation For Advanced Internet Development"
     allowed_client_dn.write_text(revdata+"\n", encoding="utf-8")
     load_allowed_client_dn(allowed_client_dn)
     a_name = rfc4514_cmp.dn_rfc2253_string_to_rfc4514_name(data)
