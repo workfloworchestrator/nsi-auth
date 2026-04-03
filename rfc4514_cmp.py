@@ -247,6 +247,7 @@ def subject_dn_from_traefik_cert_karl(header_value: str) -> str | None:
         # Traefik strips newlines from the PEM before URL-encoding (to prevent header injection),
         # so load_pem_x509_certificate would fail on the re-assembled string. Instead, extract
         # the base64 between the PEM markers and load as DER.
+        # *** ARNOTODO: Not sure the PEM is actually URL-escaped, please provide reference ***
         # Use unquote (not unquote_plus) to preserve '+' characters valid in base64.
         pem_str = unquote(header_value)
         b64 = re.sub(r"-----[^-]+-----", "", pem_str).replace(" ", "")
@@ -262,7 +263,8 @@ def subject_dn_from_traefik_cert_info(header_value: str) -> str | None:
     Traefik format: Subject="CN=...,O=...,C=..."
     Returns the DN string without the Subject="" wrapper, or None if not found.
     """
-    # Match Subject="..." pattern and extract the DN
+    # Arno: See e.g. https://github.com/traefik/traefik/issues/12887
+    # Karl: Match Subject="..." pattern and extract the DN
     # Traefik URL-encodes the header value, so decode it first
     match = re.search(r'Subject="([^"]+)"', unquote_plus(header_value))
     if match:

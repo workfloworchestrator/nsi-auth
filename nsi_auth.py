@@ -20,7 +20,6 @@
 import threading
 from logging.config import dictConfig
 from typing import Callable
-from urllib.parse import unquote, unquote_plus
 from cryptography import x509
 from flask import Flask, request
 from pydantic import BaseModel, FilePath
@@ -150,13 +149,26 @@ def get_client_dn(): ### -> tuple[str | None, str]:
             return None, "missing"
 
         if settings.tls_client_subject_authn_header == K8S_TRAEFIK_TLS_CLIENT_CERT_HEADER:
-            # If Traefik this is in PEM with some changes, see above
             if ',' in authn_header_val:
-                app.logger.warning(
-                    f"multiple certificates in {K8S_TRAEFIK_TLS_CLIENT_CERT_HEADER} header on HTTP request, unsupported")
-                return None, "traefik-pem-multiple-certificates"
+                # Traefik sent a chain of certs, separated by , see above
+                try:
+                    pem_str_list = [v.strip() for v in authn_header_val.split(',') if v.strip()] if authn_header_val else []
+                    # Undocumented: assume client cert is first in list
+                    # This issue says client cert comes first: https://github.com/keycloak/keycloak/issues/46395#issuecomment-3915177071
+                    # Code suggest extra certs follow client cert: https://github.com/tdiesler/keycloak/commit/8d318c552a2c778b65265f4c46a3b30c7dc99a27#diff-4a1b33f7b0a6b8526caf3186df5ccd193f7efcb683dcff9e515de2765ec9fd19R236
+                    # "Traefik sends the client certificate and any intermediate CA certificates as PEM blocks in a single `X-Forwarded-Tls-Client-Cert` header, separated by commas."
+                    #  --- https://github.com/tdiesler/keycloak/commit/8d318c552a2c778b65265f4c46a3b30c7dc99a27#diff-4a1b33f7b0a6b8526caf3186df5ccd193f7efcb683dcff9e515de2765ec9fd19R288
+                    # If Traefik this is in PEM with some changes, see above
+                    pem_str = pem_str_list[0]
+                except:
+                    app.logger.warning(
+                        f"multiple certificates in {K8S_TRAEFIK_TLS_CLIENT_CERT_HEADER} header on HTTP request, could not parse")
+                    return None, "traefik-pem-multiple-certificates, bad parse"
+            else:
+                # If Traefik this is in PEM with some changes, see above
+                pem_str = authn_header_val
 
-            dn = rfc4514_cmp.subject_dn_from_traefik_cert_pem(authn_header_val)
+            dn = rfc4514_cmp.subject_dn_from_traefik_cert_pem(pem_str)
             if dn:
                 return dn, "traefik-pem"
 
