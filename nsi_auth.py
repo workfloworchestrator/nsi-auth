@@ -182,9 +182,8 @@ def get_client_dn(): ### -> tuple[str | None, str]:
             dn = rfc4514_cmp.dn_rfc2253_string_to_rfc4514_name(authn_header_val)
             if dn:
                 return dn, "nginx"
-        else:
-            # Default no name, higher layer logs and sends 403.
-            return None, "none"
+
+        return None, "none"
 
     except ValueError as e:
             return None, str(e)

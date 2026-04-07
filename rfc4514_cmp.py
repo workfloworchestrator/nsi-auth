@@ -4,6 +4,8 @@
 #
 import base64
 import re
+from urllib.parse import unquote_plus
+
 from cryptography import x509
 from cryptography.x509.oid import ObjectIdentifier, NameOID
 from cryptography.x509 import load_pem_x509_certificate

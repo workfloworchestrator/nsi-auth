@@ -1,0 +1,1 @@
+Running these tests somehow requires PYTHONPATH to be set to the parent dir.
