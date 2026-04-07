@@ -531,24 +531,24 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cryptography" },
-    { name = "flask" },
-    { name = "gunicorn" },
-    { name = "pydantic-settings" },
-    { name = "watchdog" },
+    { name = "cryptography", specifier = "==46.0.6" },
+    { name = "flask", specifier = "==3.1.3" },
+    { name = "gunicorn", specifier = "==25.3.0" },
+    { name = "pydantic-settings", specifier = "==2.13.1" },
+    { name = "watchdog", specifier = "==6.0.0" },
 ]
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "black" },
-    { name = "bumpversion" },
-    { name = "flake8" },
-    { name = "flake8-pyproject" },
-    { name = "isort" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "ruff" },
+    { name = "black", specifier = "==26.3.1" },
+    { name = "bumpversion", specifier = "==0.6.0" },
+    { name = "flake8", specifier = "==7.3.0" },
+    { name = "flake8-pyproject", specifier = "==1.2.4" },
+    { name = "isort", specifier = "==8.0.1" },
+    { name = "mypy", specifier = "==1.19.1" },
+    { name = "pytest", specifier = "==9.0.2" },
+    { name = "pytest-cov", specifier = "==7.1.0" },
+    { name = "ruff", specifier = "==0.15.8" },
 ]
 
 [[package]]
