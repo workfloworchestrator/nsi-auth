@@ -5,13 +5,22 @@
 [![License](https://img.shields.io/badge/License-Apache%202.0-lightgrey.svg)](https://opensource.org/licenses/Apache-2.0)
 
 The **NSI Authentication Server** (`nsi-auth`) is designed to integrate with
-Kubernetes ingress controllers such as **ingress-nginx**.
+Kubernetes ingress controllers such as **ingress-nginx** and **Traefik**.
 
-When an authentication request is sent to `nsi-auth`, the server verifies
-whether the certificate’s **Distinguished Name (DN)**, provided in an HTTP
-header, is included in the list of allowed DNs.
+When an authentication request is sent to `nsi-auth`, the server extracts the
+client certificate’s **Distinguished Name (DN)** from an HTTP header and
+verifies it against the list of allowed DNs using standards-compliant
+**RFC 4514** comparison (via Python `cryptography` x509.Name objects).
 
-- ✅ If the DN is authorized, the server responds with **HTTP 200 (OK)**  
+Depending on the ingress controller, the DN can be extracted from:
+
+- A **DN string header** (`ssl-client-subject-dn`) — used by ingress-nginx
+- A **PEM certificate** or certificate chain (`X-Forwarded-Tls-Client-Cert`) — used by Traefik
+- A **certificate info summary** (`X-Forwarded-Tls-Client-Cert-Info`) — used by Traefik
+
+The header to use is selected via configuration (see [Configuration Options](#3-configuration-options)).
+
+- ✅ If the DN is authorized, the server responds with **HTTP 200 (OK)**
 - ❌ If not authorized, it returns **HTTP 403 (Forbidden)**
 
 ---
@@ -24,7 +33,7 @@ header, is included in the list of allowed DNs.
   - [2. CA Certificate Handling](#2-ca-certificate-handling)
   - [3. Configuration Options](#3-configuration-options)
   - [4. Ingress Configuration](#4-ingress-configuration)
-- [Summary](#summary)
+- [See Also](#-see-also)
 
 ---
 
@@ -61,7 +70,7 @@ volumeMounts:
 
 env:
   ALLOWED_CLIENT_SUBJECT_DN_PATH: "/config/allowed_client_dn.txt"
-  SSL_CLIENT_SUBJECT_DN_HEADER: "ssl-client-subject-dn"
+  TLS_CLIENT_SUBJECT_AUTHN_HEADER: "ssl-client-subject-dn"
   USE_WATCHDOG: "False"
   LOG_LEVEL: "INFO"
 
@@ -109,12 +118,12 @@ trusted CA chain (see [Ingress Configuration](#4-ingress-configuration)).
 
 ### 3. Configuration Options
 
-| Variable | Description                                                                                                                              | Default |
-| -------------------------------- |------------------------------------------------------------------------------------------------------------------------------------------| ------------------------------- |
-| `ALLOWED_CLIENT_SUBJECT_DN_PATH` | Path to the file listing allowed client certificate DNs. DNs should be as close to RFC4514 as possible, and stored as UTF-8 in the file. | `/config/allowed_client_dn.txt` |
-| `SSL_CLIENT_SUBJECT_DN_HEADER` | HTTP header containing the client certificate DN. For **ingress-nginx**, this should not be changed.                                     | `ssl-client-subject-dn`         |
-| `USE_WATCHDOG`                   | Enables file-change monitoring using [watchdog](https://pypi.org/project/watchdog/). Useful for non-Kubernetes environments.             | `False`                         |
-| `LOG_LEVEL`                      | Logging verbosity. Options: `DEBUG`, `INFO`, `WARNING`, `ERROR`.                                                                         | `INFO`                          |
+| Variable                          | Description                                                                                                                                                                                                                                                                                         | Default                         |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
+| `ALLOWED_CLIENT_SUBJECT_DN_PATH`  | Path to the file listing allowed client certificate DNs. DNs should be as close to RFC 4514 format as possible, stored as UTF-8.                                                                                                                                                                    | `/config/allowed_client_dn.txt` |
+| `TLS_CLIENT_SUBJECT_AUTHN_HEADER` | HTTP header used to extract the client identity. Determines ingress mode: `ssl-client-subject-dn` (ingress-nginx, DN in RFC 2253), `X-Forwarded-Tls-Client-Cert` (Traefik, PEM certificate or comma-separated chain), or `X-Forwarded-Tls-Client-Cert-Info` (Traefik, URL-encoded cert info summary). | `ssl-client-subject-dn`         |
+| `USE_WATCHDOG`                    | Enables file-change monitoring using [watchdog](https://pypi.org/project/watchdog/). Useful for non-Kubernetes environments.                                                                                                                                                                        | `False`                         |
+| `LOG_LEVEL`                       | Logging verbosity. Options: `DEBUG`, `INFO`, `WARNING`, `ERROR`.                                                                                                                                                                                                                                    | `INFO`                          |
 
 **File reload behavior:**
 
@@ -126,13 +135,25 @@ module provides faster, event-based file monitoring.
 > `watchdog` cannot be used when running in Kubernetes, because ConfigMap updates replace the file via symbolic
 > links, and this is not detected.
 
+**DN format and comparison:**
+
+DN comparison is now standards-compliant using RFC 4514 via Python
+`cryptography` x509.Name objects. DNs in the allowed DN file are parsed
+flexibly, but should be as close to
+[RFC 4514](https://datatracker.ietf.org/doc/html/rfc4514) format as possible
+(e.g. `CN=CertA,OU=Dept X,O=Company 1,C=NL`). The file must be UTF-8 encoded.
+
 ### 4. Ingress Configuration
 
 Finally, configure the ingress controller of the application to:
 
 1. Use the `ca.crt` secret created by `nsi-auth`
 2. Enable and verify **mutual TLS (mTLS)** authentication
-3. Forward the client certificate DN to `nsi-auth` for validation
+3. Forward the client certificate DN (or certificate) to `nsi-auth` for validation
+
+#### ingress-nginx
+
+Set `TLS_CLIENT_SUBJECT_AUTHN_HEADER` to `ssl-client-subject-dn` (the default).
 
 Assuming `nsi-auth` is deployed in the `production` namespace, use the
 following ingress annotations:
@@ -143,6 +164,30 @@ nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
 nginx.ingress.kubernetes.io/auth-tls-verify-depth: "3"
 nginx.ingress.kubernetes.io/auth-url: http://nsi-auth.production.svc.cluster.local/validate
 ```
+
+#### Traefik
+
+Set `TLS_CLIENT_SUBJECT_AUTHN_HEADER` to `X-Forwarded-Tls-Client-Cert` to
+have Traefik forward the full PEM certificate (or certificate chain). Configure
+the Traefik
+[PassTLSClientCert](https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/passtlsclientcert/)
+middleware with `pem: true`:
+
+```yaml
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: nsi-auth-mtls
+spec:
+  passTLSClientCert:
+    pem: true
+```
+
+Alternatively, set `TLS_CLIENT_SUBJECT_AUTHN_HEADER` to
+`X-Forwarded-Tls-Client-Cert-Info` to use the Traefik cert info summary header
+instead (requires configuring the `info.subject` fields in the middleware).
+
+#### Result
 
 These settings ensure that the ingress controller:
 
@@ -161,4 +206,4 @@ This project is licensed under the [Apache License, Version 2.0](https://www.apa
 
 - [Kubernetes Ingress documentation](https://kubernetes.io/docs/concepts/services-networking/ingress/)
 - [Nginx Ingress Controller](https://kubernetes.github.io/ingress-nginx/)
-- [cURL CA Certificates](https://kubernetes.github.io/ingress-nginx/)
+- [cURL CA Certificates](https://curl.se/docs/caextract.html)
