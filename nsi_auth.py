@@ -17,9 +17,13 @@
 #
 """Verify DN from HTTP header against list of allowed DN's."""
 
+import logging
+import platform
 import threading
-from logging.config import dictConfig
+from importlib.metadata import version
 from typing import Callable
+
+import structlog
 from cryptography import x509
 from flask import Flask, request
 from pydantic import BaseModel, FilePath
@@ -28,6 +32,8 @@ from watchdog.events import FileModifiedEvent, FileSystemEvent, FileSystemEventH
 from watchdog.observers import Observer
 
 import rfc4514_cmp
+
+logger = structlog.get_logger(__name__)
 
 # Client TLS certificate Subject DistinguishedName as HTTPS Header:
 # -----------------------------------------------------------------
@@ -96,36 +102,78 @@ class State:
     allowed_client_subject_dn_names: list[x509.name.Name] = []
 
 
+def configure_logging() -> None:
+    """Configure structlog and the stdlib root logger to share a single output pipeline.
+
+    Both structlog-native loggers and foreign stdlib loggers (e.g. uvicorn) are
+    routed through a structlog ``ProcessorFormatter``, ensuring consistent
+    formatting across all log sources.
+    """
+    numeric_level = getattr(logging, settings.log_level.upper(), logging.INFO)
+
+    shared_processors: list[structlog.types.Processor] = [
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+    ]
+
+    structlog.configure(
+        processors=shared_processors
+        + [
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        wrapper_class=structlog.make_filtering_bound_logger(numeric_level),
+        logger_factory=structlog.stdlib.LoggerFactory(),
+    )
+
+    formatter = structlog.stdlib.ProcessorFormatter(
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            structlog.dev.ConsoleRenderer(),
+        ],
+        foreign_pre_chain=shared_processors,
+    )
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+
+    root = logging.getLogger()
+    root.handlers.clear()
+    root.addHandler(handler)
+    root.setLevel(numeric_level)
+
+    for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
+        uvi_logger = logging.getLogger(name)
+        uvi_logger.handlers.clear()
+        uvi_logger.propagate = True
+
+    class _SuppressHealthCheck(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            return " /health " not in record.getMessage()
+
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.filters.clear()
+    access_logger.addFilter(_SuppressHealthCheck())
+
+
 def init_app() -> Flask:
     """Initialize Flask app."""
-    dictConfig(
-        {
-            "version": 1,
-            "formatters": {
-                "default": {
-                    "format": "[%(asctime)s] [%(module)s] [%(levelname)s] %(message)s",
-                }
-            },
-            "handlers": {
-                "wsgi": {
-                    "class": "logging.StreamHandler",
-                    "stream": "ext://flask.logging.wsgi_errors_stream",
-                    "formatter": "default",
-                }
-            },
-            "root": {"level": "INFO", "handlers": ["wsgi"]},
-            "disable_existing_loggers": False,
-        }
-    )
-    app = Flask(__name__)
-    app.logger.setLevel(settings.log_level)
-
-    return app
+    configure_logging()
+    return Flask(__name__)
 
 
 settings = Settings()
 state = State()
 app = init_app()
+logger.info(
+    "Starting NSI Auth %s using Python %s (%s) on %s",
+    version("nsi_auth"),
+    platform.python_version(),
+    platform.python_implementation(),
+    platform.node(),
+    **settings.model_dump(mode="json"),
+)
 
 
 
@@ -161,7 +209,7 @@ def get_client_dn(): ### -> tuple[str | None, str]:
                     # If Traefik this is in PEM with some changes, see above
                     pem_str = pem_str_list[0]
                 except:
-                    app.logger.warning(
+                    logger.warning(
                         f"multiple certificates in {K8S_TRAEFIK_TLS_CLIENT_CERT_HEADER} header on HTTP request, could not parse")
                     return None, "traefik-pem-multiple-certificates, bad parse"
             else:
@@ -189,13 +237,19 @@ def get_client_dn(): ### -> tuple[str | None, str]:
             return None, str(e)
 
 
+@app.route("/health", methods=["GET"])
+def health() -> tuple[str, int]:
+    """Health check endpoint for k8s liveness/readiness probes."""
+    return "OK", 200
+
+
 @app.route("/validate", methods=["GET"])
 def validate() -> tuple[str, int]:
     """Verify the DN from the packet header against the list of allowed DN."""
     request_rfc4514_name, source = get_client_dn()
 
     if request_rfc4514_name is None:
-        app.logger.warning(
+        logger.warning(
             f"Missing authorization header or incorrect value: {settings.tls_client_subject_authn_header}: {source}"
         )
         return "Forbidden", 403
@@ -205,10 +259,10 @@ def validate() -> tuple[str, int]:
     for allowed_dn_name in state.allowed_client_subject_dn_names:
 
         if request_rfc4514_name == allowed_dn_name:
-            app.logger.info(f"allow {request_rfc4514_name} (from {source} header)")
+            logger.info(f"allow {request_rfc4514_name} (from {source} header)")
             return "OK", 200
 
-    app.logger.info(f"deny {request_rfc4514_name} (from {source} header)")
+    logger.info(f"deny {request_rfc4514_name} (from {source} header)")
     return "Forbidden", 403
 
 #
@@ -222,11 +276,11 @@ class FileChangeHandler(FileSystemEventHandler):
         self.filepath = filepath
         self.callback = callback
         load_allowed_client_dn(self.filepath)
-        app.logger.info(f"watch {self.filepath} for changes")
+        logger.info(f"watch {self.filepath} for changes")
 
     def on_modified(self, event: FileSystemEvent) -> None:
         """Call load_allowed_client_dn() when `filepath` is modified."""
-        app.logger.debug(f"on_modified {event} {FilePath(str(event.src_path)).resolve()} {self.filepath.resolve()}")
+        logger.debug(f"on_modified {event} {FilePath(str(event.src_path)).resolve()} {self.filepath.resolve()}")
         if FilePath(str(event.src_path)).resolve() == self.filepath.resolve():
             self.callback(self.filepath)
 
@@ -252,13 +306,13 @@ def watch_file(filepath: FilePath, callback: Callable[[FilePath], None]) -> None
     def watch() -> None:
         """If modification time of `filepath` changes call `callback`."""
         last_modified = 0
-        app.logger.info(f"watch {filepath} for changes")
+        logger.info(f"watch {filepath} for changes")
         while True:
-            app.logger.debug(f"check modification time of {filepath}")
+            logger.debug(f"check modification time of {filepath}")
             try:
                 modified = filepath.stat().st_mtime_ns
             except FileNotFoundError as e:
-                app.logger.error(f"cannot get last modification time of {filepath}: {e!s}")
+                logger.error(f"cannot get last modification time of {filepath}: {e!s}")
             else:
                 if last_modified < modified:
                     last_modified = modified
@@ -278,7 +332,7 @@ def load_allowed_client_dn(filepath: FilePath) -> None:
         with filepath.open("r") as f:
             lines = [line.strip() for line in f if line.strip()]
     except Exception as e:
-        app.logger.error(f"cannot load allowed client DN from {filepath}: {e!s}")
+        logger.error(f"cannot load allowed client DN from {filepath}: {e!s}")
     else:
         # Convert DNs from "free" file format into RFC4514 format for comparison against k8s ingress
         # NGINX's "ssl-client-subject-dn" annotation header (also converted to RFC4514 format)
@@ -286,14 +340,14 @@ def load_allowed_client_dn(filepath: FilePath) -> None:
             try:
                 rfc4514_name = rfc4514_cmp.dn_tagvalue_string_to_rfc4514_name(line)
             except ValueError:
-                app.logger.warning(f"Not a Distinguished Name {line} header in {filepath}")
+                logger.warning(f"Not a Distinguished Name {line} header in {filepath}")
             else:
                 new_allowed_client_subject_dn_names.append(rfc4514_name)
 
         # Detect change in persistent state vs run-time
         if state.allowed_client_subject_dn_names != new_allowed_client_subject_dn_names:
             state.allowed_client_subject_dn_names = new_allowed_client_subject_dn_names
-            app.logger.info(f"load {len(new_allowed_client_subject_dn_names)} DN from {filepath}")
+            logger.info(f"load {len(new_allowed_client_subject_dn_names)} DN from {filepath}")
 
 if settings.use_watchdog:
     watchdog_file(settings.allowed_client_subject_dn_path, load_allowed_client_dn)

@@ -73,13 +73,13 @@ resources: {}
   #   memory: 128Mi
 
 livenessProbe:
-  #httpGet:
-  #  path: /validate
-  #  port: http
+  httpGet:
+    path: /health
+    port: http
 readinessProbe:
-  #httpGet:
-  #  path: /validate
-  #  port: http
+  httpGet:
+    path: /health
+    port: http
 
 autoscaling:
   enabled: false
