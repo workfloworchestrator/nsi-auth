@@ -33,7 +33,7 @@ The header to use is selected via configuration (see [Configuration Options](#3-
   - [2. CA Certificate Handling](#2-ca-certificate-handling)
   - [3. Configuration Options](#3-configuration-options)
   - [4. Ingress Configuration](#4-ingress-configuration)
-- [Summary](#summary)
+- [See Also](#-see-also)
 
 ---
 
@@ -206,4 +206,4 @@ This project is licensed under the [Apache License, Version 2.0](https://www.apa
 
 - [Kubernetes Ingress documentation](https://kubernetes.io/docs/concepts/services-networking/ingress/)
 - [Nginx Ingress Controller](https://kubernetes.github.io/ingress-nginx/)
-- [cURL CA Certificates](https://kubernetes.github.io/ingress-nginx/)
+- [cURL CA Certificates](https://curl.se/docs/caextract.html)

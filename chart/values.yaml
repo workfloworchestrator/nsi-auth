@@ -110,7 +110,7 @@ affinity: {}
 # optional configmap with environment variables mounted into the pod
 env:
   ALLOWED_CLIENT_SUBJECT_DN_PATH: "/config/allowed_client_dn.txt"
-  SSL_CLIENT_SUBJECT_DN_HEADER: "ssl-client-subject-dn"
+  TLS_CLIENT_SUBJECT_AUTHN_HEADER: "ssl-client-subject-dn"
   USE_WATCHDOG: "False"
   LOG_LEVEL: "INFO"
 
