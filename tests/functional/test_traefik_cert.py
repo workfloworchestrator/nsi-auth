@@ -1,0 +1,128 @@
+#  Copyright 2026 SURF.
+#  Licensed under the Apache License, Version 2.0 (the "License");
+#  you may not use this file except in compliance with the License.
+#  You may obtain a copy of the License at
+#
+#        http://www.apache.org/licenses/LICENSE-2.0
+#
+#  Unless required by applicable law or agreed to in writing, software
+#  distributed under the License is distributed on an "AS IS" BASIS,
+#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#  See the License for the specific language governing permissions and
+#  limitations under the License.
+
+"""Functional tests for Traefik X-Forwarded-Tls-Client-Cert (PEM) header authentication."""
+
+from flask.testing import FlaskClient
+
+
+# From: https://raw.githubusercontent.com/pyca/cryptography/refs/heads/main/docs/x509/reference.rst
+# Subject: CN=Good CA,O=Test Certificates 2011,C=US
+_TRUST_ANCHOR_CERT_PEM = b"""
+-----BEGIN CERTIFICATE-----
+MIIDfDCCAmSgAwIBAgIBAjANBgkqhkiG9w0BAQsFADBFMQswCQYDVQQGEwJVUzEf
+MB0GA1UEChMWVGVzdCBDZXJ0aWZpY2F0ZXMgMjAxMTEVMBMGA1UEAxMMVHJ1c3Qg
+QW5jaG9yMB4XDTEwMDEwMTA4MzAwMFoXDTMwMTIzMTA4MzAwMFowQDELMAkGA1UE
+BhMCVVMxHzAdBgNVBAoTFlRlc3QgQ2VydGlmaWNhdGVzIDIwMTExEDAOBgNVBAMT
+B0dvb2QgQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCQWJpHYo37
+Xfb7oJSPe+WvfTlzIG21WQ7MyMbGtK/m8mejCzR6c+f/pJhEH/OcDSMsXq8h5kXa
+BGqWK+vSwD/Pzp5OYGptXmGPcthDtAwlrafkGOS4GqIJ8+k9XGKs+vQUXJKsOk47
+RuzD6PZupq4s16xaLVqYbUC26UcY08GpnoLNHJZS/EmXw1ZZ3d4YZjNlpIpWFNHn
+UGmdiGKXUPX/9H0fVjIAaQwjnGAbpgyCumWgzIwPpX+ElFOUr3z7BoVnFKhIXze+
+VmQGSWxZxvWDUN90Ul0tLEpLgk3OVxUB4VUGuf15OJOpgo1xibINPmWt14Vda2N9
+yrNKloJGZNqLAgMBAAGjfDB6MB8GA1UdIwQYMBaAFOR9X9FclYYILAWuvnW2ZafZ
+XahmMB0GA1UdDgQWBBRYAYQkG7wrUpRKPaUQchRR9a86yTAOBgNVHQ8BAf8EBAMC
+AQYwFwYDVR0gBBAwDjAMBgpghkgBZQMCATABMA8GA1UdEwEB/wQFMAMBAf8wDQYJ
+KoZIhvcNAQELBQADggEBADWHlxbmdTXNwBL/llwhQqwnazK7CC2WsXBBqgNPWj7m
+tvQ+aLG8/50Qc2Sun7o2VnwF9D18UUe8Gj3uPUYH+oSI1vDdyKcjmMbKRU4rk0eo
+3UHNDXwqIVc9CQS9smyV+x1HCwL4TTrq+LXLKx/qVij0Yqk+UJfAtrg2jnYKXsCu
+FMBQQnWCGrwa1g1TphRp/RmYHnMynYFmZrXtzFz+U9XEA7C+gPq4kqDI/iVfIT1s
+6lBtdB50lrDVwl2oYfAvW/6sC2se2QleZidUmrziVNP4oEeXINokU6T6p//HM1FG
+QYw2jOvpKcKtWCSAnegEbgsGYzATKjmPJPJ0npHFqzM=
+-----END CERTIFICATE-----
+""".strip()
+
+# Real Internet2 cert chain (client cert + 3 intermediate CAs), comma-separated as Traefik sends it
+_CERT_CHAIN_HEADER = (
+    b'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'
+    b',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'
+    b',MIIGkDCCBHigAwIBAgIRAJNhG7GFaX1Mm3w/sd+ASzYwDQYJKoZIhvcNAQEMBQAwgYgxCzAJBgNVBAYTAlVTMRMwEQYDVQQIEwpOZXcgSmVyc2V5MRQwEgYDVQQHEwtKZXJzZXkgQ2l0eTEeMBwGA1UEChMVVGhlIFVTRVJUUlVTVCBOZXR3b3JrMS4wLAYDVQQDEyVVU0VSVHJ1c3QgUlNBIENlcnRpZmljYXRpb24gQXV0aG9yaXR5MB4XDTIxMDMyMjAwMDAwMFoXDTM4MDExODIzNTk1OVowWjELMAkGA1UEBhMCR0IxGDAWBgNVBAoTD1NlY3RpZ28gTGltaXRlZDExMC8GA1UEAxMoU2VjdGlnbyBQdWJsaWMgRW1haWwgUHJvdGVjdGlvbiBSb290IFI0NjCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAJHlG/qqbTcrdccuXxSl2yyXtixGj2nZ7JYt8x1avtMdI+ZoCf9KEXMarmefdprS5+y42V8r+SZWUa92nan8F+8yCtAjPLosT0eD7J0FaEJeBuDV6CtoSJey+vOkcTV9NJsXi39NDdvcTwVMlGK/NfovyKccZtlxX+XmWlXKq/S4dxlFUEVOSqvbnmbBGbc3QshWpUAS+TPoOEU6xoSjAo4vJLDDQYUHSZzP3NHyJm/tMxwzZypFN9mFZSIasbUQUglrA8YfcD2RxH2QPe1m+JD/JeDtkqKLMSmtnBJmeGOdV+z7C96O3IvLOql39Lrl7DiMi+YTZqdpWMOCGhrN8Z/YU5JOSX2pRefxQyFatz5AzWOJz9m/x1AL4bzniJatntQX2l3P4JH9phDUuQOBm2ms+4SogTXrG+tobHxgPsPfybSudB1Ird1uEYbhKmo2Fq7IzrzbWPxAk0DYjlOXwqwiOOWIMbMuoe/s4EIN6v+TVkoGpJtMAmhkj1ZQwYEF/cvbxdcV8mu1dsOj+TLOyrVKqRt9Gdx/x2p+ley2uI39lUqcoytti/Fw5UcrAFzkuZ7U+NlYKdDL4ChibK6cYuLMvDaTQfXv/kZilbBXSnQsR1Ipnd2ioU9CwpLOLVBSXowKoffYncX4/TaHTlf9aKFfmYMc8LXd6JLTZUBVypaFAgMBAAGjggEgMIIBHDAfBgNVHSMEGDAWgBRTeb9aqitKz1SA4dibwJ3ysgNmyzAdBgNVHQ4EFgQUp9eVd+tKwyfNk743TCaEIRR9XZgwDgYDVR0PAQH/BAQDAgGGMA8GA1UdEwEB/wQFMAMBAf8wHQYDVR0lBBYwFAYIKwYBBQUHAwQGCCsGAQUFBwMCMBEGA1UdIAQKMAgwBgYEVR0gADBQBgNVHR8ESTBHMEWgQ6BBhj9odHRwOi8vY3JsLnVzZXJ0cnVzdC5jb20vVVNFUlRydXN0UlNBQ2VydGlmaWNhdGlvbkF1dGhvcml0eS5jcmwwNQYIKwYBBQUHAQEEKTAnMCUGCCsGAQUFBzABhhlodHRwOi8vb2NzcC51c2VydHJ1c3QuY29tMA0GCSqGSIb3DQEBDAUAA4ICAQBwpquT4ow8LyRHG6NgR4oUsFncHl+eWLMtEBwv90EpGCGGDDDjoO23j4Zw6tS+THzwgz4SyP0MFQaMzHj40enm+z1Y29QIQCnJTeDOHWHKMRxeiFD8MBso+XgVM6z6MMDbbJ95btM/4eE3LyaBuBbheiINaAVieIdxLq6+dVkm00kmvMdlARsTkEvr5a9nYhGAs8T5RBD1DozAv9r89WJcn+QYX1M2l5vv0ws3Me1ziVSjC2cRhcae4seOFFjkRdJItzfk6H/Wm2FNv2XG8nE1nbgN8UCdhOROlQGGQ9DN152RmSJ1A6KAJIldo3YrJNiO8J4JLAE5/Tl9CNUHtbdYTOZLCAZ95G1g2GELQ2DQ1Xxo55iNojqUA4w1feORe86Dq2P08xzolHKepP1LGEw1gDGCkUYR0gVXLJExGd3dfEZDm0mmU7vWb6vRyLso/GUawFD2MZS4kK8/igkPO2Pkjfd5HD7hknpPVhcuBaWxWj8Q7bjwVlxGwts6sNZ+UJ5HC4c+11vVoV9cdbb93qpbWn/d+azhit6kRYdUmAUl8Bt5VRBMKCUnSaAAspxb9kFK+cvm/MjErxN63YNEcMs2QKs3N862V8MQaoKqD+KsKnaLxF6pxRpOotenpfUTNE9GqxP9nI6i9rSHf16VFwW4NnJ6yUgzHUMdIqtTge98Vg=='
+    b',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'
+)
+
+# Traefik strips PEM markers and newlines
+_SINGLE_CERT_PEM_STR = (
+    _TRUST_ANCHOR_CERT_PEM.decode("iso-8859-1")
+    .replace("-----BEGIN CERTIFICATE-----", "")
+    .replace("-----END CERTIFICATE-----", "")
+    .replace("\n", "")
+)
+
+_CHAIN_HEADER_STR = _CERT_CHAIN_HEADER.decode("iso-8859-1")
+
+
+# ---------------------------------------------------------------------------
+# Happy paths
+# ---------------------------------------------------------------------------
+
+
+def test_validate_with_valid_cert(cert_client: FlaskClient) -> None:
+    """Valid cert with DN in allow-list returns 200 OK."""
+    response = cert_client.get(
+        "/validate", headers={"X-Forwarded-Tls-Client-Cert": _SINGLE_CERT_PEM_STR}
+    )
+    assert response.status_code == 200
+    assert response.data == b"OK"
+
+
+def test_validate_with_cert_chain(cert_client: FlaskClient) -> None:
+    """Cert chain (comma-separated) with first cert DN in allow-list returns 200 OK."""
+    response = cert_client.get(
+        "/validate", headers={"X-Forwarded-Tls-Client-Cert": _CHAIN_HEADER_STR}
+    )
+    assert response.status_code == 200
+    assert response.data == b"OK"
+
+
+# ---------------------------------------------------------------------------
+# Unhappy paths
+# ---------------------------------------------------------------------------
+
+
+def test_validate_without_cert_header(cert_client: FlaskClient) -> None:
+    """Missing header returns 403."""
+    response = cert_client.get("/validate")
+    assert response.status_code == 403
+
+
+def test_validate_with_corrupted_cert(cert_client: FlaskClient) -> None:
+    """Corrupted cert (invalid base64) returns 403."""
+    bad_pem = _SINGLE_CERT_PEM_STR.replace("M", "Z")
+    response = cert_client.get(
+        "/validate", headers={"X-Forwarded-Tls-Client-Cert": bad_pem}
+    )
+    assert response.status_code == 403
+
+
+def test_validate_with_garbage_cert(cert_client: FlaskClient) -> None:
+    """Completely garbage input returns 403."""
+    response = cert_client.get(
+        "/validate", headers={"X-Forwarded-Tls-Client-Cert": "not-a-cert"}
+    )
+    assert response.status_code == 403
+
+
+def test_validate_with_empty_cert_header(cert_client: FlaskClient) -> None:
+    """Empty header returns 403."""
+    response = cert_client.get(
+        "/validate", headers={"X-Forwarded-Tls-Client-Cert": ""}
+    )
+    assert response.status_code == 403
+
+
+def test_validate_wrong_header_name(cert_client: FlaskClient) -> None:
+    """Sending cert via wrong header name returns 403."""
+    response = cert_client.get(
+        "/validate", headers={"ssl-client-subject-dn": "CN=Good CA,O=Test Certificates 2011,C=US"}
+    )
+    assert response.status_code == 403
