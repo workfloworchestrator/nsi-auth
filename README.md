@@ -48,7 +48,7 @@ Below is an example configuration snippet:
 
 ```yaml
 image:
-  repository: ghcr.io/bandwidthondemand/nsi-auth
+  repository: ghcr.io/workfloworchestrator/nsi-auth
   pullPolicy: IfNotPresent
   tag: "latest"
 
