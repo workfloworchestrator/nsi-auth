@@ -52,10 +52,10 @@ namespaces = false
 dev = [
     "pytest==9.0.3",
     "pytest-cov==7.1.0",
-    "mypy==1.20.0",
+    "mypy==1.20.1",
     "flake8==7.3.0",
     "black==26.3.1",
-    "ruff==0.15.9",
+    "ruff==0.15.10",
     "bumpversion==0.6.0",
     "isort==8.0.1",
     "flake8-pyproject==1.2.4",
