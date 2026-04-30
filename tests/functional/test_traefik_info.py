@@ -24,27 +24,33 @@ from flask.testing import FlaskClient
 
 
 def test_validate_info_header_allowed(info_client: FlaskClient) -> None:
-    """URL-encoded Subject= info header with DN in allow-list returns 200 OK."""
+    """URL-encoded Subject= info header with DN in allow-list returns 200 OK with auth headers."""
     encoded = quote_plus('Subject="CN=Test,O=Org,C=US"')
     response = info_client.get("/validate", headers={"X-Forwarded-Tls-Client-Cert-Info": encoded})
     assert response.status_code == 200
     assert response.data == b"OK"
+    assert response.headers["X-Auth-Method"] == "mTLS"
+    assert response.headers["X-Client-DN"] == "CN=Test,O=Org,C=US"
 
 
 def test_validate_info_header_plain(info_client: FlaskClient) -> None:
-    """Plain (non-URL-encoded) Subject= info header returns 200 OK."""
+    """Plain (non-URL-encoded) Subject= info header returns 200 OK with auth headers."""
     raw = 'Subject="CN=Test,O=Org,C=US"'
     response = info_client.get("/validate", headers={"X-Forwarded-Tls-Client-Cert-Info": raw})
     assert response.status_code == 200
     assert response.data == b"OK"
+    assert response.headers["X-Auth-Method"] == "mTLS"
+    assert response.headers["X-Client-DN"] == "CN=Test,O=Org,C=US"
 
 
 def test_validate_info_header_second_dn(info_client: FlaskClient) -> None:
-    """Second allowed DN also returns 200 OK."""
+    """Second allowed DN also returns 200 OK with auth headers."""
     encoded = quote_plus('Subject="CN=CertB,OU=Dept X,O=Company Y,C=ZZ"')
     response = info_client.get("/validate", headers={"X-Forwarded-Tls-Client-Cert-Info": encoded})
     assert response.status_code == 200
     assert response.data == b"OK"
+    assert response.headers["X-Auth-Method"] == "mTLS"
+    assert response.headers["X-Client-DN"] == "CN=CertB,OU=Dept X,O=Company Y,C=ZZ"
 
 
 # ---------------------------------------------------------------------------
@@ -53,9 +59,11 @@ def test_validate_info_header_second_dn(info_client: FlaskClient) -> None:
 
 
 def test_validate_without_info_header(info_client: FlaskClient) -> None:
-    """Missing header returns 403."""
+    """Missing header returns 403 without auth headers."""
     response = info_client.get("/validate")
     assert response.status_code == 403
+    assert "X-Auth-Method" not in response.headers
+    assert "X-Client-DN" not in response.headers
 
 
 def test_validate_info_header_not_in_allowlist(info_client: FlaskClient) -> None:

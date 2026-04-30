@@ -67,21 +67,25 @@ _CHAIN_HEADER_STR = _CERT_CHAIN_HEADER.decode("iso-8859-1")
 
 
 def test_validate_with_valid_cert(cert_client: FlaskClient) -> None:
-    """Valid cert with DN in allow-list returns 200 OK."""
+    """Valid cert with DN in allow-list returns 200 OK with auth headers."""
     response = cert_client.get(
         "/validate", headers={"X-Forwarded-Tls-Client-Cert": _SINGLE_CERT_PEM_STR}
     )
     assert response.status_code == 200
     assert response.data == b"OK"
+    assert response.headers["X-Auth-Method"] == "mTLS"
+    assert "CN=Good CA,O=Test Certificates 2011,C=US" in response.headers["X-Client-DN"]
 
 
 def test_validate_with_cert_chain(cert_client: FlaskClient) -> None:
-    """Cert chain (comma-separated) with first cert DN in allow-list returns 200 OK."""
+    """Cert chain (comma-separated) with first cert DN in allow-list returns 200 OK with auth headers."""
     response = cert_client.get(
         "/validate", headers={"X-Forwarded-Tls-Client-Cert": _CHAIN_HEADER_STR}
     )
     assert response.status_code == 200
     assert response.data == b"OK"
+    assert response.headers["X-Auth-Method"] == "mTLS"
+    assert "X-Client-DN" in response.headers
 
 
 # ---------------------------------------------------------------------------
@@ -90,9 +94,11 @@ def test_validate_with_cert_chain(cert_client: FlaskClient) -> None:
 
 
 def test_validate_without_cert_header(cert_client: FlaskClient) -> None:
-    """Missing header returns 403."""
+    """Missing header returns 403 without auth headers."""
     response = cert_client.get("/validate")
     assert response.status_code == 403
+    assert "X-Auth-Method" not in response.headers
+    assert "X-Client-DN" not in response.headers
 
 
 def test_validate_with_corrupted_cert(cert_client: FlaskClient) -> None:

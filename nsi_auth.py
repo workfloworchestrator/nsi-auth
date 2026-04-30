@@ -244,7 +244,7 @@ def health() -> tuple[str, int]:
 
 
 @app.route("/validate", methods=["GET"])
-def validate() -> tuple[str, int]:
+def validate() -> tuple[str, int] | tuple[str, int, dict[str, str]]:
     """Verify the DN from the packet header against the list of allowed DN."""
     logger.debug("validate request headers", **dict(request.headers))
     request_rfc4514_name, source = get_client_dn()
@@ -261,7 +261,10 @@ def validate() -> tuple[str, int]:
 
         if request_rfc4514_name == allowed_dn_name:
             logger.info(f"allow {request_rfc4514_name} (from {source} header)")
-            return "OK", 200
+            return "OK", 200, {
+                "X-Auth-Method": "mTLS",
+                "X-Client-DN": request_rfc4514_name.rfc4514_string(),
+            }
 
     logger.info(f"deny {request_rfc4514_name} (from {source} header)")
     return "Forbidden", 403

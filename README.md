@@ -20,8 +20,10 @@ Depending on the ingress controller, the DN can be extracted from:
 
 The header to use is selected via configuration (see [Configuration Options](#3-configuration-options)).
 
-- ✅ If the DN is authorized, the server responds with **HTTP 200 (OK)**
+- ✅ If the DN is authorized, the server responds with **HTTP 200 (OK)** and returns `X-Auth-Method: mTLS` and `X-Client-DN: <RFC 4514 DN>` response headers
 - ❌ If not authorized, it returns **HTTP 403 (Forbidden)**
+
+The response headers allow downstream services (e.g. nsi-dds-proxy) to verify that mTLS authentication occurred and identify the client. The ingress controller forwards these headers to the upstream application via `auth-response-headers` (nginx) or `authResponseHeaders` (Traefik).
 
 ---
 

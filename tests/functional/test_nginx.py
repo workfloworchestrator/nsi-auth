@@ -23,19 +23,23 @@ from flask.testing import FlaskClient
 
 
 def test_validate_with_valid_dn_header(client: FlaskClient) -> None:
-    """DN in allow-list returns 200 OK."""
+    """DN in allow-list returns 200 OK with auth headers."""
     headers = {"ssl-client-subject-dn": "CN=CertA,OU=Dept X,O=Company Y,C=ZZ"}
     response = client.get("/validate", headers=headers)
     assert response.status_code == 200
     assert response.data == b"OK"
+    assert response.headers["X-Auth-Method"] == "mTLS"
+    assert response.headers["X-Client-DN"] == "CN=CertA,OU=Dept X,O=Company Y,C=ZZ"
 
 
 def test_validate_with_second_valid_dn_header(client: FlaskClient) -> None:
-    """Second allowed DN also returns 200 OK."""
+    """Second allowed DN also returns 200 OK with auth headers."""
     headers = {"ssl-client-subject-dn": "CN=CertB,OU=Dept X,O=Company Y,C=ZZ"}
     response = client.get("/validate", headers=headers)
     assert response.status_code == 200
     assert response.data == b"OK"
+    assert response.headers["X-Auth-Method"] == "mTLS"
+    assert response.headers["X-Client-DN"] == "CN=CertB,OU=Dept X,O=Company Y,C=ZZ"
 
 
 # ---------------------------------------------------------------------------
@@ -44,10 +48,12 @@ def test_validate_with_second_valid_dn_header(client: FlaskClient) -> None:
 
 
 def test_validate_without_dn_header(client: FlaskClient) -> None:
-    """Missing header returns 403."""
+    """Missing header returns 403 without auth headers."""
     response = client.get("/validate")
     assert response.status_code == 403
     assert response.data == b"Forbidden"
+    assert "X-Auth-Method" not in response.headers
+    assert "X-Client-DN" not in response.headers
 
 
 def test_validate_with_empty_dn_header(client: FlaskClient) -> None:
@@ -71,11 +77,13 @@ def test_validate_with_unauthorized_escaped_dn_header(client: FlaskClient) -> No
 
 
 def test_validate_wrong_order_dn_header(client: FlaskClient) -> None:
-    """DN in reversed field order (not RFC 2253) returns 403."""
+    """DN in reversed field order (not RFC 2253) returns 403 without auth headers."""
     headers = {"ssl-client-subject-dn": "C=ZZ,O=Company Y,OU=Dept X,CN=CertA"}
     response = client.get("/validate", headers=headers)
     assert response.status_code == 403
     assert response.data == b"Forbidden"
+    assert "X-Auth-Method" not in response.headers
+    assert "X-Client-DN" not in response.headers
 
 
 def test_validate_wrong_header_name(client: FlaskClient) -> None:
@@ -96,6 +104,8 @@ def test_validate_reversed_dn_in_file_matches_rfc2253_header(reversed_client: Fl
     response = reversed_client.get("/validate", headers=headers)
     assert response.status_code == 200
     assert response.data == b"OK"
+    assert response.headers["X-Auth-Method"] == "mTLS"
+    assert response.headers["X-Client-DN"] == "CN=CertA,OU=Dept X,O=Company Y,C=ZZ"
 
 
 def test_validate_reversed_dn_header_not_matched(reversed_client: FlaskClient) -> None:
