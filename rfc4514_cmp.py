@@ -203,22 +203,67 @@ def confer_parse_tag_pairs(input_string):
 #EOAI
 
 
+# BER tags for the string types that appear in X.509 DirectoryString-like fields,
+# where one input byte maps to one Unicode codepoint (so cryptography's
+# str-via-Latin-1 storage round-trips losslessly via codepoint-level operations).
+_BER_DIRECTORY_STRING_TAGS = frozenset({
+    0x0C,  # UTF8String
+    0x13,  # PrintableString
+    0x14,  # TeletexString (T.61)
+    0x16,  # IA5String
+    0x1A,  # VisibleString / ISO646String
+})
+
+
+def _strip_ber_tlv(value: str) -> str:
+    """Strip BER TLV framing from `value` if present, else return unchanged.
+
+    Cryptography's `from_rfc4514_string` parser handles the RFC 4514 `#hexstring`
+    alternative form for attribute values by storing the raw BER bytes as a str
+    (one codepoint per byte). Go's `cert.Subject.String()` emits unrecognized
+    attribute types in this form, so a value like `2.5.4.42=#130448616e73`
+    becomes `(OID 2.5.4.42, '\\x13\\x04Hans')` — same identity as `GN=Hans` but
+    different `.value`. This helper undoes the BER framing for the common
+    DirectoryString tags so canonical equality holds.
+    """
+    if len(value) < 2:
+        return value
+    tag = ord(value[0])
+    if tag not in _BER_DIRECTORY_STRING_TAGS:
+        return value
+    length_byte = ord(value[1])
+    if length_byte & 0x80:
+        n = length_byte & 0x7F
+        if n == 0 or len(value) < 2 + n:
+            return value
+        length = sum(ord(value[2 + i]) << (8 * (n - 1 - i)) for i in range(n))
+        offset = 2 + n
+    else:
+        length = length_byte
+        offset = 2
+    if offset + length != len(value):
+        return value
+    return value[offset:]
+
+
 def _value_str(value: str | bytes) -> str:
-    """Coerce a NameAttribute value to str. cryptography returns either."""
+    """Coerce a NameAttribute value to a canonical str, stripping any BER framing."""
     match value:
         case str():
-            return value
+            return _strip_ber_tlv(value)
         case bytes():
-            return value.decode()
+            return _strip_ber_tlv(value.decode("latin-1"))
 
 
 def name_attrs(name: x509.Name) -> frozenset[tuple[str, str]]:
     """Return the (OID, value) multiset of a Name.
 
     Comparing two names by their `name_attrs` is order-independent and
-    serialization-independent: identities differing only in RDN order or in
+    serialization-independent: identities differing only in RDN order, in
     whether attributes are written with friendly names (`CN=`, `GN=`, …) or
-    dotted OIDs (`2.5.4.3=`, `2.5.4.42=`, …) compare equal.
+    dotted OIDs (`2.5.4.3=`, `2.5.4.42=`, …), or in whether attribute values
+    use the plain form (`=value`) or the RFC 4514 BER hex form (`=#hexstring`)
+    compare equal.
     """
     return frozenset(
         (a.oid.dotted_string, _value_str(a.value)) for rdn in name.rdns for a in rdn

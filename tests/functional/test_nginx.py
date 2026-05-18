@@ -149,6 +149,24 @@ def test_validate_reversed_dn_header_not_matched(reversed_client: FlaskClient) -
             "emailAddress=jane.doe@example.com,SN=Doe,GN=Jane,CN=Jane Doe",
             id="rfc2253-reversed-form",
         ),
+        pytest.param(
+            # Traefik's kubernetesIngressNGINX provider (the actual production
+            # case): attribute types without friendly names in Go's stdlib are
+            # emitted as RFC 4514 `#hexstring` (BER TLV) form. Cryptography's
+            # parser stores those bytes verbatim into the NameAttribute.value as
+            # a str — without TLV stripping the multiset comparison fails.
+            #
+            #   2.5.4.42=#13044a616e65  → PrintableString "Jane"  (GN)
+            #   2.5.4.4=#1303446f65     → PrintableString "Doe"   (SN)
+            #   1.2.840.113549.1.9.1=#0c146a616e652e646f6540657861... → UTF8 email
+            #   2.5.4.97=#1310...                                    → organizationIdentifier
+            "CN=Jane Doe,O=Example Org,ST=Utrecht,C=NL,"
+            "2.5.4.42=#13044a616e65,"
+            "2.5.4.4=#1303446f65,"
+            "1.2.840.113549.1.9.1=#0c146a616e652e646f65406578616d706c652e636f6d,"
+            "2.5.4.97=#13104558414d504c452d3132333435363738",
+            id="rfc4514-ber-hexstring-form",
+        ),
     ],
 )
 def test_validate_personal_attrs_matches_any_serialization(
