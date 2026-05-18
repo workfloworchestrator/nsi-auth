@@ -177,6 +177,11 @@ def test_validate_personal_attrs_matches_any_serialization(
     assert response.status_code == 200
     assert response.data == b"OK"
     assert response.headers["X-Auth-Method"] == "mTLS"
+    # The response X-Client-DN must be HTTP-header-safe: no bytes below 0x20 (control
+    # chars from raw BER framing would otherwise leak through and uvicorn would
+    # refuse to send the response).
+    client_dn = response.headers["X-Client-DN"]
+    assert all(ord(c) >= 0x20 for c in client_dn), f"control char in X-Client-DN: {client_dn!r}"
 
 
 # ---------------------------------------------------------------------------

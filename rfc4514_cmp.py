@@ -255,6 +255,22 @@ def _value_str(value: str | bytes) -> str:
             return _strip_ber_tlv(value.decode("latin-1"))
 
 
+def name_rfc4514_string(name: x509.Name) -> str:
+    """Return the RFC 4514 string of `name` with BER-framed values normalised.
+
+    The default `Name.rfc4514_string()` emits raw bytes for attributes that were parsed
+    from the `#hexstring` form, including the low control bytes (0x13 PrintableString
+    tag, length prefix, …) at the start of the value. HTTP header values forbid bytes
+    below 0x20, so passing that string through `X-Client-DN` makes uvicorn reject the
+    response. Rebuilding the Name with `_value_str` applied to every attribute strips
+    the BER framing and yields a header-safe representation that preserves the
+    original RDN ordering.
+    """
+    return x509.Name(
+        [x509.NameAttribute(a.oid, _value_str(a.value)) for rdn in name.rdns for a in rdn]
+    ).rfc4514_string()
+
+
 def name_attrs(name: x509.Name) -> frozenset[tuple[str, str]]:
     """Return the (OID, value) multiset of a Name.
 

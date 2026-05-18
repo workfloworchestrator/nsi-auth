@@ -267,7 +267,7 @@ def validate() -> tuple[str, int] | tuple[str, int, dict[str, str]]:
         logger.info(f"allow {request_rfc4514_name} (from {source} header)")
         return "OK", 200, {
             "X-Auth-Method": "mTLS",
-            "X-Client-DN": request_rfc4514_name.rfc4514_string(),
+            "X-Client-DN": rfc4514_cmp.name_rfc4514_string(request_rfc4514_name),
         }
 
     logger.info(f"deny {request_rfc4514_name} (from {source} header)")
