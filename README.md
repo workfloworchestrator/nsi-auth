@@ -165,11 +165,24 @@ module provides faster, event-based file monitoring.
 
 **DN format and comparison:**
 
-DN comparison is now standards-compliant using RFC 4514 via Python
-`cryptography` x509.Name objects. DNs in the allowed DN file are parsed
-flexibly, but should be as close to
+DNs are parsed per RFC 4514 (via `cryptography.x509.Name`) and compared as
+the multiset of (attribute-OID, value) pairs.
+
+This makes matching independent of:
+
+- **RDN ordering** — `CN=Foo,O=Acme,C=NL` and `C=NL,O=Acme,CN=Foo` are
+  treated as the same identity.
+- **Attribute-type spelling** — friendly names and dotted OIDs match each
+  other (`emailAddress=` ≡ `1.2.840.113549.1.9.1=`, `GN=` ≡ `2.5.4.42=`,
+  `SN=` ≡ `2.5.4.4=`, `organizationIdentifier=` ≡ `2.5.4.97=`). This is
+  important because different reverse proxies serialize the same DN
+  differently (e.g. Go's `cert.Subject.String()` falls back to dotted OIDs
+  for any attribute type it doesn't have a friendly name for).
+
+DNs in the allowed DN file should be as close to
 [RFC 4514](https://datatracker.ietf.org/doc/html/rfc4514) format as possible
-(e.g. `CN=CertA,OU=Dept X,O=Company 1,C=NL`). The file must be UTF-8 encoded.
+(e.g. `CN=CertA,OU=Dept X,O=Company 1,C=NL`). The file must be UTF-8
+encoded.
 
 ### 4. Ingress Configuration
 

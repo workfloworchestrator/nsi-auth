@@ -76,14 +76,25 @@ def test_validate_with_unauthorized_escaped_dn_header(client: FlaskClient) -> No
     assert response.status_code == 403
 
 
-def test_validate_wrong_order_dn_header(client: FlaskClient) -> None:
-    """DN in reversed field order (not RFC 2253) returns 403 without auth headers."""
-    headers = {"ssl-client-subject-dn": "C=ZZ,O=Company Y,OU=Dept X,CN=CertA"}
-    response = client.get("/validate", headers=headers)
-    assert response.status_code == 403
-    assert response.data == b"Forbidden"
-    assert "X-Auth-Method" not in response.headers
-    assert "X-Client-DN" not in response.headers
+@pytest.mark.parametrize(
+    "header_value",
+    [
+        pytest.param(
+            "C=ZZ,O=Company Y,OU=Dept X,CN=CertA",
+            id="reversed-rdn-order",
+        ),
+        pytest.param(
+            "OU=Dept X,CN=CertA,C=ZZ,O=Company Y",
+            id="shuffled-rdn-order",
+        ),
+    ],
+)
+def test_validate_order_independent_matching(client: FlaskClient, header_value: str) -> None:
+    """Same identity in any RDN order matches the allowlist (multiset semantics)."""
+    response = client.get("/validate", headers={"ssl-client-subject-dn": header_value})
+    assert response.status_code == 200
+    assert response.data == b"OK"
+    assert response.headers["X-Auth-Method"] == "mTLS"
 
 
 def test_validate_wrong_header_name(client: FlaskClient) -> None:
@@ -113,6 +124,41 @@ def test_validate_reversed_dn_header_not_matched(reversed_client: FlaskClient) -
     headers = {"ssl-client-subject-dn": "CN=Unknown,O=Org,C=NL"}
     response = reversed_client.get("/validate", headers=headers)
     assert response.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# Go-format DN (Traefik kubernetesIngressNGINX provider, production scenario)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "header_value",
+    [
+        pytest.param(
+            "2.5.4.97=EXAMPLE-12345678,1.2.840.113549.1.9.1=jane.doe@example.com,"
+            "2.5.4.4=Doe,2.5.4.42=Jane,C=NL,ST=Utrecht,O=Example Org,CN=Jane Doe",
+            id="go-oid-fallback-form",
+        ),
+        pytest.param(
+            "CN=Jane Doe,GN=Jane,SN=Doe,emailAddress=jane.doe@example.com,"
+            "organizationIdentifier=EXAMPLE-12345678,O=Example Org,ST=Utrecht,C=NL",
+            id="openssl-friendly-form",
+        ),
+        pytest.param(
+            "C=NL,ST=Utrecht,O=Example Org,organizationIdentifier=EXAMPLE-12345678,"
+            "emailAddress=jane.doe@example.com,SN=Doe,GN=Jane,CN=Jane Doe",
+            id="rfc2253-reversed-form",
+        ),
+    ],
+)
+def test_validate_personal_attrs_matches_any_serialization(
+    personal_attrs_client: FlaskClient, header_value: str
+) -> None:
+    """Same identity in OpenSSL, Go-OID, or RFC 2253 form all match a single allowlist entry."""
+    response = personal_attrs_client.get("/validate", headers={"ssl-client-subject-dn": header_value})
+    assert response.status_code == 200
+    assert response.data == b"OK"
+    assert response.headers["X-Auth-Method"] == "mTLS"
 
 
 # ---------------------------------------------------------------------------

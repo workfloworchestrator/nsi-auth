@@ -100,6 +100,10 @@ class State:
     # schema for <class 'cryptography.x509.name.Name'>."
     # So we do not inherit ;o)
     allowed_client_subject_dn_names: list[x509.name.Name] = []
+    # Precomputed canonical attrs for each allowed DN. Used for order-independent
+    # equality in validate() — x509.Name.__eq__ is RDN-order-sensitive, but our
+    # allowlist semantics are not.
+    allowed_client_subject_dn_attrs: set[frozenset[tuple[str, str]]] = set()
 
 
 def configure_logging() -> None:
@@ -255,16 +259,16 @@ def validate() -> tuple[str, int] | tuple[str, int, dict[str, str]]:
         )
         return "Forbidden", 403
 
-    # *** Main authentication line ***
-    # x509.Name object equals method does comparison
-    for allowed_dn_name in state.allowed_client_subject_dn_names:
-
-        if request_rfc4514_name == allowed_dn_name:
-            logger.info(f"allow {request_rfc4514_name} (from {source} header)")
-            return "OK", 200, {
-                "X-Auth-Method": "mTLS",
-                "X-Client-DN": request_rfc4514_name.rfc4514_string(),
-            }
+    # Order-independent comparison: same multiset of (OID, value) pairs.
+    # x509.Name.__eq__ is RDN-order-sensitive, which breaks when different
+    # proxies/serializers emit the same identity in different orders (e.g.
+    # Go's cert.Subject.String() vs. OpenSSL's RFC 2253 output).
+    if rfc4514_cmp.name_attrs(request_rfc4514_name) in state.allowed_client_subject_dn_attrs:
+        logger.info(f"allow {request_rfc4514_name} (from {source} header)")
+        return "OK", 200, {
+            "X-Auth-Method": "mTLS",
+            "X-Client-DN": request_rfc4514_name.rfc4514_string(),
+        }
 
     logger.info(f"deny {request_rfc4514_name} (from {source} header)")
     return "Forbidden", 403
@@ -329,29 +333,33 @@ def watch_file(filepath: FilePath, callback: Callable[[FilePath], None]) -> None
 #
 # Load DN from file.
 #
+def _parse_allowlist_entry(line: str, filepath: FilePath) -> x509.name.Name | None:
+    """Parse one allowlist line; log and return None on failure."""
+    try:
+        return rfc4514_cmp.dn_tagvalue_string_to_rfc4514_name(line)
+    except ValueError:
+        logger.warning(f"Not a Distinguished Name {line} header in {filepath}")
+        return None
+
+
 def load_allowed_client_dn(filepath: FilePath) -> None:
     """Load list of allowed client DN from file."""
-    new_allowed_client_subject_dn_names = []
     try:
         with filepath.open("r") as f:
             lines = [line.strip() for line in f if line.strip()]
     except Exception as e:
         logger.error(f"cannot load allowed client DN from {filepath}: {e!s}")
-    else:
-        # Convert DNs from "free" file format into RFC4514 format for comparison against k8s ingress
-        # NGINX's "ssl-client-subject-dn" annotation header (also converted to RFC4514 format)
-        for line in lines:
-            try:
-                rfc4514_name = rfc4514_cmp.dn_tagvalue_string_to_rfc4514_name(line)
-            except ValueError:
-                logger.warning(f"Not a Distinguished Name {line} header in {filepath}")
-            else:
-                new_allowed_client_subject_dn_names.append(rfc4514_name)
+        return
 
-        # Detect change in persistent state vs run-time
-        if state.allowed_client_subject_dn_names != new_allowed_client_subject_dn_names:
-            state.allowed_client_subject_dn_names = new_allowed_client_subject_dn_names
-            logger.info(f"load {len(new_allowed_client_subject_dn_names)} DN from {filepath}")
+    parsed = [_parse_allowlist_entry(line, filepath) for line in lines]
+    new_names = [name for name in parsed if name is not None]
+    new_attrs = {rfc4514_cmp.name_attrs(name) for name in new_names}
+
+    # Detect change in persistent state vs run-time
+    if state.allowed_client_subject_dn_names != new_names:
+        state.allowed_client_subject_dn_names = new_names
+        state.allowed_client_subject_dn_attrs = new_attrs
+        logger.info(f"load {len(new_names)} DN from {filepath}")
 
 if settings.use_watchdog:
     watchdog_file(settings.allowed_client_subject_dn_path, load_allowed_client_dn)

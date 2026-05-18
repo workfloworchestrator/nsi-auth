@@ -203,6 +203,28 @@ def confer_parse_tag_pairs(input_string):
 #EOAI
 
 
+def _value_str(value: str | bytes) -> str:
+    """Coerce a NameAttribute value to str. cryptography returns either."""
+    match value:
+        case str():
+            return value
+        case bytes():
+            return value.decode()
+
+
+def name_attrs(name: x509.Name) -> frozenset[tuple[str, str]]:
+    """Return the (OID, value) multiset of a Name.
+
+    Comparing two names by their `name_attrs` is order-independent and
+    serialization-independent: identities differing only in RDN order or in
+    whether attributes are written with friendly names (`CN=`, `GN=`, …) or
+    dotted OIDs (`2.5.4.3=`, `2.5.4.42=`, …) compare equal.
+    """
+    return frozenset(
+        (a.oid.dotted_string, _value_str(a.value)) for rdn in name.rdns for a in rdn
+    )
+
+
 def subject_dn_from_cert_pem(cert_pem_bytes:str):
     """
     Parse Subject DN from a PEM-encoded certificate.

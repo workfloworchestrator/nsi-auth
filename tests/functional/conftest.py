@@ -102,3 +102,33 @@ def reversed_application(reversed_allowed_client_dn: Path) -> Generator[Flask, N
 def reversed_client(reversed_application: Flask) -> FlaskClient:
     """Test client for reversed DN order tests."""
     return reversed_application.test_client()
+
+
+# ---------------------------------------------------------------------------
+# Personal-attribute fixtures (Go OID-fallback form, real production case)
+# ---------------------------------------------------------------------------
+
+@fixture
+def personal_attrs_allowed_client_dn(tmp_path: Path) -> Path:
+    """Allowlist with personal attrs in operator-friendly OpenSSL form."""
+    path = tmp_path / "allowed_dn.txt"
+    content = (
+        "CN=Jane Doe,GN=Jane,SN=Doe,"
+        "emailAddress=jane.doe@example.com,"
+        "organizationIdentifier=EXAMPLE-12345678,"
+        "O=Example Org,ST=Utrecht,C=NL\n"
+    )
+    path.write_text(content, encoding="utf-8")
+    return path
+
+
+@fixture
+def personal_attrs_application(personal_attrs_allowed_client_dn: Path) -> Generator[Flask, None, None]:
+    """App configured for nginx auth with personal-attr DN allowlist."""
+    yield from make_application(personal_attrs_allowed_client_dn, "ssl-client-subject-dn")
+
+
+@fixture
+def personal_attrs_client(personal_attrs_application: Flask) -> FlaskClient:
+    """Test client for personal-attr DN matching."""
+    return personal_attrs_application.test_client()

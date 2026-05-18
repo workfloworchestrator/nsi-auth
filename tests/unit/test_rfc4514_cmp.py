@@ -145,3 +145,43 @@ def test_pem_malformed_raises(value):
     """Empty or whitespace-only input raises an exception."""
     with pytest.raises(Exception):
         rfc4514_cmp.subject_dn_from_traefik_cert_pem(value)
+
+
+# ---------------------------------------------------------------------------
+# name_attrs: order-independent canonical form
+# ---------------------------------------------------------------------------
+
+
+_USER_OPENSSL = (
+    "CN=Jane Doe,GN=Jane,SN=Doe,emailAddress=jane.doe@example.com,"
+    "organizationIdentifier=EXAMPLE-12345678,O=Example Org,ST=Utrecht,C=NL"
+)
+_USER_GO = (
+    "2.5.4.97=EXAMPLE-12345678,1.2.840.113549.1.9.1=jane.doe@example.com,"
+    "2.5.4.4=Doe,2.5.4.42=Jane,C=NL,ST=Utrecht,O=Example Org,CN=Jane Doe"
+)
+
+
+@pytest.mark.parametrize(
+    ("dn_a", "dn_b"),
+    [
+        pytest.param(_USER_OPENSSL, _USER_GO, id="openssl-vs-go-oid-form"),
+        pytest.param(
+            "CN=Foo,O=Acme,C=NL",
+            "C=NL,O=Acme,CN=Foo",
+            id="forward-vs-reversed",
+        ),
+    ],
+)
+def test_name_attrs_equal_across_serializations(dn_a: str, dn_b: str) -> None:
+    """Same identity in different serializations yields equal canonical attrs."""
+    a = rfc4514_cmp.dn_rfc2253_string_to_rfc4514_name(dn_a)
+    b = rfc4514_cmp.dn_rfc2253_string_to_rfc4514_name(dn_b)
+    assert rfc4514_cmp.name_attrs(a) == rfc4514_cmp.name_attrs(b)
+
+
+def test_name_attrs_distinguishes_different_identities() -> None:
+    """Different identities produce different canonical attrs."""
+    a = rfc4514_cmp.dn_rfc2253_string_to_rfc4514_name("CN=Foo,O=Acme,C=NL")
+    b = rfc4514_cmp.dn_rfc2253_string_to_rfc4514_name("CN=Bar,O=Acme,C=NL")
+    assert rfc4514_cmp.name_attrs(a) != rfc4514_cmp.name_attrs(b)
