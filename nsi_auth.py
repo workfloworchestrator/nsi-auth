@@ -247,7 +247,12 @@ def health() -> tuple[str, int]:
     return "OK", 200
 
 
-@app.route("/validate", methods=["GET"])
+# Accept any method: Envoy ext_authz mirrors the downstream request method onto
+# the /validate subrequest (POST for SOAP backends like safnari/pce, GET for dds).
+# Validation is header-only, so the method is irrelevant; restricting to GET 405s
+# every POST-based backend. (nginx/Traefik forward-auth always GET, so GET-only
+# worked there.)
+@app.route("/validate", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"])
 def validate() -> tuple[str, int] | tuple[str, int, dict[str, str]]:
     """Verify the DN from the packet header against the list of allowed DN."""
     logger.debug("validate request headers", **dict(request.headers))

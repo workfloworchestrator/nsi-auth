@@ -195,8 +195,11 @@ def test_root_not_found(client: FlaskClient) -> None:
     assert response.status_code == 404
 
 
-@pytest.mark.parametrize("method", ["post", "put", "delete", "patch"])
-def test_validate_rejects_non_get_methods(client: FlaskClient, method: str) -> None:
-    """Only GET is allowed on /validate."""
-    response = getattr(client, method)("/validate")
-    assert response.status_code == 405
+@pytest.mark.parametrize("method", ["get", "post", "put", "delete", "patch"])
+def test_validate_accepts_any_method(client: FlaskClient, method: str) -> None:
+    """Validation runs for any method: Envoy ext_authz mirrors the downstream
+    method onto /validate (POST for SOAP backends), so GET-only would 405 them."""
+    headers = {"ssl-client-subject-dn": "CN=CertA,OU=Dept X,O=Company Y,C=ZZ"}
+    response = getattr(client, method)("/validate", headers=headers)
+    assert response.status_code == 200
+    assert response.headers["X-Auth-Method"] == "mTLS"
