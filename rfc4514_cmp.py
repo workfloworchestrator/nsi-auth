@@ -4,7 +4,7 @@
 #
 import base64
 import re
-from urllib.parse import unquote_plus
+from urllib.parse import unquote, unquote_plus
 
 from cryptography import x509
 from cryptography.x509.oid import ObjectIdentifier, NameOID
@@ -303,45 +303,31 @@ def subject_dn_from_cert_pem(cert_pem_bytes:str):
     return subject_name
 
 
+def subject_dn_from_pem_header(header_value: str):
+    """Extract the Subject DN from a standard PEM certificate carried in a header.
+
+    HTTP headers cannot contain newlines, so a full PEM is normally URL-encoded
+    (e.g. nginx's ``$ssl_client_escaped_cert``). URL-decode first, then parse; a
+    value without percent-escapes passes through unchanged.
+    """
+    return subject_dn_from_cert_pem(bytes(unquote(header_value), "iso-8859-1"))
+
+
 def subject_dn_from_traefik_cert_pem(traefik_cert_str):
-    """ Convert Traefik minimized, HTTP Header compatible PEM to what
-    cryptography groks
+    """Convert Traefik's minimized, HTTP-header-safe PEM to a Subject DN.
+
+    Traefik strips the PEM delimiters and newlines, and separates a chain with
+    commas (the client certificate first). Reassemble the first certificate into
+    a PEM that cryptography accepts and read its subject.
     See https://cryptography.io/en/latest/faq/#why-can-t-i-import-my-pem-file
     """
-    delim_pem_cert_str = '-----BEGIN CERTIFICATE-----\n'
-    n = 64
-    base64lines = [traefik_cert_str[i:i + n] for i in range(0, len(traefik_cert_str), n)]
-    for base64line in base64lines:
-        delim_pem_cert_str += base64line+'\n'
-    delim_pem_cert_str += '-----END CERTIFICATE-----\n'
-
-    # https://www.rfc-editor.org/rfc/rfc9110.html#name-fields says values must be considered
-    # opaque bytes, but Python cannot do that, so use the old HTTP/1.1 standard header encoding.
-    delim_pem_cert_bytes = bytes(delim_pem_cert_str, "iso-8859-1")
-    s = subject_dn_from_cert_pem(delim_pem_cert_bytes)
-    return s
-
-# Arno: Currently unused, pem_str does not contain ---BEGIN--- delimiters, according
-# to Traefik docs.
-def subject_dn_from_traefik_cert_karl(header_value: str) -> str | None:
-    """Extract DN from Traefik's X-Forwarded-Tls-Client-Cert header (URL-encoded PEM).
-
-    Parses the full certificate to access all subject fields including
-    organizationIdentifier (OID 2.5.4.97) and emailAddress (OID 1.2.840.113549.1.9.1).
-    Returns a normalized DN string in DER field order, or None on parse failure.
-    """
-    try:
-        # Traefik strips newlines from the PEM before URL-encoding (to prevent header injection),
-        # so load_pem_x509_certificate would fail on the re-assembled string. Instead, extract
-        # the base64 between the PEM markers and load as DER.
-        # *** ARNOTODO: Not sure the PEM is actually URL-escaped, please provide reference ***
-        # Use unquote (not unquote_plus) to preserve '+' characters valid in base64.
-        pem_str = unquote(header_value)
-        b64 = re.sub(r"-----[^-]+-----", "", pem_str).replace(" ", "")
-        return subject_dn_from_cert_pem(b64)
-    except Exception as e:
-        app.logger.warning(f"failed to parse PEM from X-Forwarded-Tls-Client-Cert: {e!s}")
-        return None
+    # Undocumented but consistent across Traefik versions: client cert is first.
+    first = next((part.strip() for part in traefik_cert_str.split(",") if part.strip()), "")
+    body = "\n".join(first[i:i + 64] for i in range(0, len(first), 64))
+    pem = f"-----BEGIN CERTIFICATE-----\n{body}\n-----END CERTIFICATE-----\n"
+    # RFC 9110 says header values are opaque bytes; Python can't, so use the
+    # legacy HTTP/1.1 header encoding (iso-8859-1).
+    return subject_dn_from_cert_pem(bytes(pem, "iso-8859-1"))
 
 
 def subject_dn_from_traefik_cert_info(header_value: str) -> str | None:
@@ -360,3 +346,44 @@ def subject_dn_from_traefik_cert_info(header_value: str) -> str | None:
         # see above. So do flex parsing:
         return dn_tagvalue_string_to_rfc4514_name(info_subject_str)
     return None
+
+
+def _xfcc_field(header_value: str, key: str) -> str | None:
+    """Return the value of one Envoy XFCC field, or None if absent.
+
+    XFCC (``x-forwarded-client-cert``) is ``Key=Value;Key="Quoted value";...``.
+    Quoted values (Subject, Cert, Chain) may contain ``;`` and ``=``; match
+    case-insensitively and prefer the quoted content.
+    """
+    match = re.search(
+        rf'(?:^|;)\s*{re.escape(key)}=("([^"]*)"|[^;]*)', header_value, re.IGNORECASE
+    )
+    if not match:
+        return None
+    return match.group(2) if match.group(2) is not None else match.group(1)
+
+
+def subject_dn_from_xfcc_cert(header_value: str):
+    """Extract the Subject DN from the ``Cert=`` field of an Envoy XFCC header.
+
+    Envoy emits the client certificate as a URL-encoded PEM in ``Cert="..."``
+    when ``set_current_client_cert_details.cert`` is true. Returns None if the
+    field is absent — there is deliberately no fallback to ``Subject=``.
+    """
+    cert_field = _xfcc_field(header_value, "Cert")
+    if not cert_field:
+        return None
+    return subject_dn_from_cert_pem(bytes(unquote(cert_field), "iso-8859-1"))
+
+
+def subject_dn_from_xfcc_subject(header_value: str):
+    """Extract the Subject DN from the ``Subject=`` field of an Envoy XFCC header.
+
+    Envoy emits the subject DN (RFC 2253, comma-separated) in ``Subject="..."``
+    when ``set_current_client_cert_details.subject`` is true. Returns None if the
+    field is absent — there is deliberately no fallback to ``Cert=``.
+    """
+    subject_field = _xfcc_field(header_value, "Subject")
+    if not subject_field:
+        return None
+    return dn_tagvalue_string_to_rfc4514_name(subject_field)

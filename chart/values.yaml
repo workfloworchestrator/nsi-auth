@@ -110,7 +110,13 @@ affinity: {}
 # optional configmap with environment variables mounted into the pod
 env:
   ALLOWED_CLIENT_SUBJECT_DN_PATH: "/config/allowed_client_dn.txt"
+  # Name of the HTTP header carrying the client identity (any header name).
   TLS_CLIENT_SUBJECT_AUTHN_HEADER: "ssl-client-subject-dn"
+  # Parser codec for the header above. One of:
+  #   dn-rfc2253  (ingress-nginx / Envoy Lua)   traefik-info  (Traefik Cert-Info)
+  #   traefik-pem (Traefik full cert)           pem           (standard PEM cert)
+  #   xfcc-cert   (Envoy XFCC Cert=)            xfcc-subject  (Envoy XFCC Subject=)
+  TLS_CLIENT_AUTHN_FORMAT: "dn-rfc2253"
   USE_WATCHDOG: "False"
   LOG_LEVEL: "INFO"
 

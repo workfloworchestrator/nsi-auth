@@ -4,26 +4,42 @@
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-compatible-brightgreen)](https://kubernetes.io/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-lightgrey.svg)](https://opensource.org/licenses/Apache-2.0)
 
-The **NSI Authentication Server** (`nsi-auth`) is designed to integrate with
-Kubernetes ingress controllers such as **ingress-nginx** and **Traefik**.
+The **NSI Authentication Server** (`nsi-auth`) integrates with Kubernetes ingress
+controllers and gateways such as **ingress-nginx**, **Traefik** and **Envoy
+Gateway**. It is an external authorization endpoint: the proxy forwards each
+request's client-certificate identity to `nsi-auth`, which extracts the
+**Distinguished Name (DN)** and verifies it against an allow-list using
+standards-compliant **RFC 4514** comparison (via Python `cryptography`
+`x509.Name`).
 
-When an authentication request is sent to `nsi-auth`, the server extracts the
-client certificate’s **Distinguished Name (DN)** from an HTTP header and
-verifies it against the list of allowed DNs using standards-compliant
-**RFC 4514** comparison (via Python `cryptography` x509.Name objects).
+`nsi-auth` reads the identity from **one configurable header**
+(`TLS_CLIENT_SUBJECT_AUTHN_HEADER`) and parses it with **one explicitly
+configured codec** (`TLS_CLIENT_AUTHN_FORMAT`). The two are independent, so any
+proxy / header combination works. There are two capabilities:
 
-Depending on the ingress controller, the DN can be extracted from:
+- **Compare a DN** that the proxy already extracted and put in a header, or
+- **Extract the DN from a certificate** carried in a header.
 
-- A **DN string header** (`ssl-client-subject-dn`) — used by ingress-nginx
-- A **PEM certificate** or certificate chain (`X-Forwarded-Tls-Client-Cert`) — used by Traefik
-- A **certificate info summary** (`X-Forwarded-Tls-Client-Cert-Info`) — used by Traefik
+| `TLS_CLIENT_AUTHN_FORMAT` | Reads | Typical proxy / header |
+| --- | --- | --- |
+| `dn-rfc2253`   | a DN string (RFC 2253)        | ingress-nginx `ssl-client-subject-dn`; Envoy Lua |
+| `traefik-info` | DN inside `Subject="…"`        | Traefik `X-Forwarded-Tls-Client-Cert-Info` |
+| `traefik-pem`  | Traefik minimized PEM (chain)  | Traefik `X-Forwarded-Tls-Client-Cert` |
+| `pem`          | a standard (URL-encoded) PEM   | nginx `ssl-client-cert`; any proxy |
+| `xfcc-cert`    | the PEM in XFCC `Cert=`         | Envoy `x-forwarded-client-cert` |
+| `xfcc-subject` | the DN in XFCC `Subject=`       | Envoy `x-forwarded-client-cert` |
 
-The header to use is selected via configuration (see [Configuration Options](#3-configuration-options)).
+There is **no fallback between codecs**: if the configured source is missing or
+unparseable, `nsi-auth` fails closed (**403**) rather than silently using a
+different field.
 
-- ✅ If the DN is authorized, the server responds with **HTTP 200 (OK)** and returns `X-Auth-Method: mTLS` and `X-Client-DN: <RFC 4514 DN>` response headers
-- ❌ If not authorized, it returns **HTTP 403 (Forbidden)**
+- ✅ If the DN is authorized → **HTTP 200 (OK)** with `X-Auth-Method: mTLS` and `X-Client-DN: <RFC 4514 DN>` response headers
+- ❌ Otherwise → **HTTP 403 (Forbidden)**
 
-The response headers allow downstream services (e.g. nsi-dds-proxy) to verify that mTLS authentication occurred and identify the client. The ingress controller forwards these headers to the upstream application via `auth-response-headers` (nginx) or `authResponseHeaders` (Traefik).
+The proxy forwards these response headers to the upstream application via
+`auth-response-headers` (nginx), `authResponseHeaders` (Traefik), or
+`extAuth.http.headersToBackend` (Envoy Gateway), so downstream services (e.g.
+nsi-dds-proxy) can confirm mTLS happened and identify the client.
 
 ---
 
@@ -132,7 +148,8 @@ trusted CA chain (see [Ingress Configuration](#4-ingress-configuration)).
 | Variable                          | Description                                                                                                                                                                                                                                                                                         | Default                         |
 | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------- |
 | `ALLOWED_CLIENT_SUBJECT_DN_PATH`  | Path to the file listing allowed client certificate DNs. DNs should be as close to RFC 4514 format as possible, stored as UTF-8.                                                                                                                                                                    | `/config/allowed_client_dn.txt` |
-| `TLS_CLIENT_SUBJECT_AUTHN_HEADER` | HTTP header used to extract the client identity. Determines ingress mode: `ssl-client-subject-dn` (ingress-nginx, DN in RFC 2253), `X-Forwarded-Tls-Client-Cert` (Traefik, PEM certificate or comma-separated chain), or `X-Forwarded-Tls-Client-Cert-Info` (Traefik, URL-encoded cert info summary). | `ssl-client-subject-dn`         |
+| `TLS_CLIENT_SUBJECT_AUTHN_HEADER` | Name of the HTTP header carrying the client identity. Any header name; must match what the proxy sends.                                                                                                                                                                                             | `ssl-client-subject-dn`         |
+| `TLS_CLIENT_AUTHN_FORMAT`         | Codec used to parse that header's value into a DN: `dn-rfc2253`, `traefik-info`, `traefik-pem`, `pem`, `xfcc-cert`, or `xfcc-subject` (see the table in the [Overview](#nsi-authentication-server-nsi-auth)). No fallback — a missing/unparseable source returns 403.                                  | `dn-rfc2253`                    |
 | `USE_WATCHDOG`                    | Enables file-change monitoring using [watchdog](https://pypi.org/project/watchdog/). Useful for non-Kubernetes environments.                                                                                                                                                                        | `False`                         |
 | `LOG_LEVEL`                       | Logging verbosity. Options: `DEBUG`, `INFO`, `WARNING`, `ERROR`.                                                                                                                                                                                                                                    | `INFO`                          |
 
@@ -194,7 +211,8 @@ Finally, configure the ingress controller of the application to:
 
 #### ingress-nginx
 
-Set `TLS_CLIENT_SUBJECT_AUTHN_HEADER` to `ssl-client-subject-dn` (the default).
+Keep the defaults `TLS_CLIENT_SUBJECT_AUTHN_HEADER: ssl-client-subject-dn` and
+`TLS_CLIENT_AUTHN_FORMAT: dn-rfc2253`.
 
 Assuming `nsi-auth` is deployed in the `production` namespace, use the
 following ingress annotations:
@@ -208,9 +226,14 @@ nginx.ingress.kubernetes.io/auth-url: http://nsi-auth.production.svc.cluster.loc
 
 #### Traefik
 
-Set `TLS_CLIENT_SUBJECT_AUTHN_HEADER` to `X-Forwarded-Tls-Client-Cert` to
-have Traefik forward the full PEM certificate (or certificate chain). Configure
-the Traefik
+To forward the full PEM certificate (or chain), set:
+
+```yaml
+TLS_CLIENT_SUBJECT_AUTHN_HEADER: X-Forwarded-Tls-Client-Cert
+TLS_CLIENT_AUTHN_FORMAT: traefik-pem
+```
+
+and enable the Traefik
 [PassTLSClientCert](https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/passtlsclientcert/)
 middleware with `pem: true`:
 
@@ -224,9 +247,132 @@ spec:
     pem: true
 ```
 
-Alternatively, set `TLS_CLIENT_SUBJECT_AUTHN_HEADER` to
-`X-Forwarded-Tls-Client-Cert-Info` to use the Traefik cert info summary header
-instead (requires configuring the `info.subject` fields in the middleware).
+Alternatively, use the cert-info summary header — set
+`TLS_CLIENT_SUBJECT_AUTHN_HEADER: X-Forwarded-Tls-Client-Cert-Info` and
+`TLS_CLIENT_AUTHN_FORMAT: traefik-info`, and configure the `info.subject` fields
+in the middleware.
+
+#### Envoy Gateway
+
+Envoy Gateway has no built-in "subject DN" header. The recommended approach
+mirrors ingress-nginx: inject the DN with a small Lua filter and keep the
+defaults (`ssl-client-subject-dn` + `dn-rfc2253`). A best-current-practice
+deployment (here `nsi-auth` and the protected app are in `production`) is four
+resources:
+
+**1. Terminate mTLS on the listener** — `ClientTrafficPolicy` validates the
+client certificate against the `nsi-auth` CA secret:
+
+```yaml
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: ClientTrafficPolicy
+metadata:
+  name: my-app-mtls
+  namespace: production
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: my-gateway
+      sectionName: https-my-app          # the listener serving the app's host
+  tls:
+    clientValidation:
+      caCertificateRefs:
+        - kind: Secret
+          group: ""
+          name: nsi-auth-ca              # the {{ .Release.Name }}-ca secret
+      mode: RequireAndVerify
+```
+
+**2. Copy the cert subject DN into the header** — `EnvoyExtensionPolicy` (Lua),
+targeting the app's `HTTPRoute`. It strips any client-supplied value first, so a
+valid cert-holder cannot assert a different DN:
+
+```yaml
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyExtensionPolicy
+metadata:
+  name: my-app-client-cert
+  namespace: production
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: my-app
+  lua:
+    - type: Inline
+      inline: |
+        function envoy_on_request(request_handle)
+          request_handle:headers():remove("ssl-client-subject-dn")
+          local dsc = request_handle:streamInfo():downstreamSslConnection()
+          if dsc ~= nil and dsc:peerCertificatePresented() then
+            local subject = dsc:subjectPeerCertificate()   -- RFC 2253
+            if subject ~= nil and subject ~= "" then
+              request_handle:headers():add("ssl-client-subject-dn", subject)
+            end
+          end
+        end
+```
+
+`subjectPeerCertificate()` returns the DN in RFC 2253 — the same format
+ingress-nginx emits — so `nsi-auth` parses it with `dn-rfc2253`.
+
+**3. Run Lua before ext_authz** — otherwise the header is not set when the auth
+subrequest fires. Configure the `EnvoyProxy` referenced by your `GatewayClass`:
+
+```yaml
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: EnvoyProxy
+metadata:
+  name: my-proxy
+  namespace: production
+spec:
+  filterOrder:
+    - name: envoy.filters.http.lua
+      before: envoy.filters.http.ext_authz
+```
+
+**4. Delegate authorization to nsi-auth** — `SecurityPolicy` forwards the DN
+header to `/validate` and passes the response headers on to the app:
+
+```yaml
+apiVersion: gateway.envoyproxy.io/v1alpha1
+kind: SecurityPolicy
+metadata:
+  name: my-app-security-policy
+  namespace: production
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: my-app
+  extAuth:
+    headersToExtAuth:
+      - ssl-client-subject-dn            # the Lua-set DN reaches nsi-auth
+    http:
+      backendRef:
+        kind: Service
+        name: nsi-auth
+        namespace: production
+        port: 80
+      pathOverride: /validate
+      headersToBackend:
+        - X-Auth-Method
+        - X-Client-DN
+```
+
+> ⚠️ Envoy's ext_authz mirrors the **downstream request method** onto the
+> `/validate` subrequest (it does not force GET). `nsi-auth` accepts any method on
+> `/validate` for this reason; do not reverse that, or every POST to a protected
+> backend is rejected by the auth step.
+
+**Alternative — forward the certificate via XFCC.** Instead of the Lua filter,
+make Envoy emit the cert in `x-forwarded-client-cert` by setting
+`set_current_client_cert_details.cert: true` (with
+`forward_client_cert_details: SANITIZE_SET`) via an `EnvoyPatchPolicy`, then set
+`TLS_CLIENT_SUBJECT_AUTHN_HEADER: x-forwarded-client-cert` and
+`TLS_CLIENT_AUTHN_FORMAT: xfcc-cert` (or `xfcc-subject` for the `Subject=`
+field). The Lua approach needs no raw-config patch, so it is preferred.
 
 #### Result
 
@@ -247,4 +393,6 @@ This project is licensed under the [Apache License, Version 2.0](https://www.apa
 
 - [Kubernetes Ingress documentation](https://kubernetes.io/docs/concepts/services-networking/ingress/)
 - [Nginx Ingress Controller](https://kubernetes.github.io/ingress-nginx/)
+- [Traefik PassTLSClientCert middleware](https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/passtlsclientcert/)
+- [Envoy Gateway](https://gateway.envoyproxy.io/)
 - [cURL CA Certificates](https://curl.se/docs/caextract.html)

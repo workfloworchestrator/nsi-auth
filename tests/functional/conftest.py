@@ -43,7 +43,7 @@ def cert_allowed_client_dn(tmp_path: Path) -> Path:
 @fixture
 def cert_application(cert_allowed_client_dn: Path) -> Generator[Flask, None, None]:
     """App configured for Traefik PEM cert header auth."""
-    yield from make_application(cert_allowed_client_dn, "X-Forwarded-Tls-Client-Cert")
+    yield from make_application(cert_allowed_client_dn, "X-Forwarded-Tls-Client-Cert", "traefik-pem")
 
 
 @fixture
@@ -69,7 +69,7 @@ def info_allowed_client_dn(tmp_path: Path) -> Path:
 @fixture
 def info_application(info_allowed_client_dn: Path) -> Generator[Flask, None, None]:
     """App configured for Traefik Cert-Info header auth."""
-    yield from make_application(info_allowed_client_dn, "X-Forwarded-Tls-Client-Cert-Info")
+    yield from make_application(info_allowed_client_dn, "X-Forwarded-Tls-Client-Cert-Info", "traefik-info")
 
 
 @fixture
@@ -132,3 +132,55 @@ def personal_attrs_application(personal_attrs_allowed_client_dn: Path) -> Genera
 def personal_attrs_client(personal_attrs_application: Flask) -> FlaskClient:
     """Test client for personal-attr DN matching."""
     return personal_attrs_application.test_client()
+
+
+# ---------------------------------------------------------------------------
+# Standard-PEM and Envoy XFCC fixtures (generic codecs, any header name)
+# ---------------------------------------------------------------------------
+
+# Subject of the Good CA test certificate (see test_pem.GOOD_CA_PEM).
+GOOD_CA_DN = "CN=Good CA,O=Test Certificates 2011,C=US"
+
+
+@fixture
+def good_ca_allowed_client_dn(tmp_path: Path) -> Path:
+    """Allowlist holding the Good CA DN (for pem / xfcc-cert codecs)."""
+    path = tmp_path / "allowed_dn.txt"
+    path.write_text(GOOD_CA_DN + "\n", encoding="utf-8")
+    return path
+
+
+@fixture
+def pem_application(good_ca_allowed_client_dn: Path) -> Generator[Flask, None, None]:
+    """App configured for a standard PEM certificate under an arbitrary header."""
+    yield from make_application(good_ca_allowed_client_dn, "ssl-client-cert", "pem")
+
+
+@fixture
+def pem_client(pem_application: Flask) -> FlaskClient:
+    """Test client for the standard-PEM codec."""
+    return pem_application.test_client()
+
+
+@fixture
+def xfcc_cert_application(good_ca_allowed_client_dn: Path) -> Generator[Flask, None, None]:
+    """App configured for the Envoy XFCC Cert= codec."""
+    yield from make_application(good_ca_allowed_client_dn, "x-forwarded-client-cert", "xfcc-cert")
+
+
+@fixture
+def xfcc_cert_client(xfcc_cert_application: Flask) -> FlaskClient:
+    """Test client for the XFCC Cert= codec."""
+    return xfcc_cert_application.test_client()
+
+
+@fixture
+def xfcc_subject_application(info_allowed_client_dn: Path) -> Generator[Flask, None, None]:
+    """App configured for the Envoy XFCC Subject= codec (reuses CN=Test,O=Org,C=US)."""
+    yield from make_application(info_allowed_client_dn, "x-forwarded-client-cert", "xfcc-subject")
+
+
+@fixture
+def xfcc_subject_client(xfcc_subject_application: Flask) -> FlaskClient:
+    """Test client for the XFCC Subject= codec."""
+    return xfcc_subject_application.test_client()
