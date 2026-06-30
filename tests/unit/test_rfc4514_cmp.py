@@ -180,6 +180,23 @@ def test_name_attrs_equal_across_serializations(dn_a: str, dn_b: str) -> None:
     assert rfc4514_cmp.name_attrs(a) == rfc4514_cmp.name_attrs(b)
 
 
+def test_name_attrs_hexstring_form_decodes_to_plain() -> None:
+    """Envoy's RFC 4514 #hexstring value matches the plain allowlist value.
+
+    Envoy serializes OIDs it has no friendly name for (e.g. organizationIdentifier)
+    as 2.5.4.97=#130E... (BER PrintableString). confer must not escape the leading
+    '#', else the value stays a literal and never decodes. #130E4558414D504C45...
+    is "EXAMPLE-12345678".
+    """
+    envoy = rfc4514_cmp.subject_dn_from_xfcc_subject(
+        'Subject="CN=Test,2.5.4.97=#13104558414D504C452D3132333435363738,C=NL"'
+    )
+    allowed = rfc4514_cmp.dn_tagvalue_string_to_rfc4514_name(
+        "CN=Test,organizationIdentifier=EXAMPLE-12345678,C=NL"
+    )
+    assert rfc4514_cmp.name_attrs(envoy) == rfc4514_cmp.name_attrs(allowed)
+
+
 def test_name_attrs_distinguishes_different_identities() -> None:
     """Different identities produce different canonical attrs."""
     a = rfc4514_cmp.dn_rfc2253_string_to_rfc4514_name("CN=Foo,O=Acme,C=NL")

@@ -193,9 +193,13 @@ def confer_parse_tag_pairs(input_string):
         if not matches:
             return input_string
 
-        # Unescape input values, then re-escape per RFC 4514
+        # Unescape input values, then re-escape per RFC 4514. A value beginning
+        # with an unescaped '#' is the RFC 4514 hexstring form (e.g. Envoy emits
+        # organizationIdentifier as 2.5.4.97=#130E...): pass it through verbatim,
+        # else escape_rfc4514 would escape the leading '#' and turn the BER-hex
+        # value into a literal string that never decodes.
         result = ','.join(
-            f'{tag}={escape_rfc4514(unescape_value(value))}'
+            f'{tag}={value if value.startswith("#") else escape_rfc4514(unescape_value(value))}'
             for tag, value in matches
         )
 
