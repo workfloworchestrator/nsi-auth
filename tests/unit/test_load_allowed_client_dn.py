@@ -21,7 +21,7 @@ import rfc4514_cmp
 def test_load_dn_from_file(client: FlaskClient, allowed_client_dn: Path) -> None:
     """Verify that DNs are loaded from the configured file."""
     from nsi_auth import state
-    
+
     a_name = rfc4514_cmp.dn_rfc2253_string_to_rfc4514_name("CN=CertA,OU=Dept X,O=Company Y,C=ZZ")
     b_name = rfc4514_cmp.dn_rfc2253_string_to_rfc4514_name("CN=CertB,OU=Dept X,O=Company Y,C=ZZ")
 
@@ -85,7 +85,6 @@ def test_load_dn_nonexistent_file_keeps_previous_state(application: Flask, tmp_p
     assert state.allowed_client_subject_dn_names == [e_name]
 
 
-
 def test_load_dn_no_update_when_unchanged(application: Flask, allowed_client_dn: Path) -> None:
     """Verify that loading the same file content does not reassign state."""
     from nsi_auth import load_allowed_client_dn, state
@@ -131,7 +130,7 @@ def test_validate_after_dn_reload(client: FlaskClient, allowed_client_dn: Path) 
 
 def test_load_wildcard_dn_from_file(client: FlaskClient, allowed_client_dn: Path) -> None:
     """Verify that wildcard DNs are loaded from the configured file."""
-    from nsi_auth import state, load_allowed_client_dn
+    from nsi_auth import load_allowed_client_dn, state
 
     allowed_client_dn.write_text("CN=*,OU=Dept X,O=Company Y,C=ZZ\n", encoding="utf-8")
     load_allowed_client_dn(allowed_client_dn)
@@ -143,29 +142,29 @@ def test_load_wildcard_dn_from_file(client: FlaskClient, allowed_client_dn: Path
 
 def test_load_escaped_dn_from_file(client: FlaskClient, allowed_client_dn: Path) -> None:
     """Verify that DN with escapes are loaded from the configured file."""
-    from nsi_auth import state, load_allowed_client_dn
+    from nsi_auth import load_allowed_client_dn, state
 
     data = "CN=University Corporation For Advanced Internet Development,emailAddress=johndoe@internet2.edu,organizationIdentifier=NTRUS\\+MI-801069584,O=University Corporation For Advanced Internet Development,ST=Michigan,C=US"
-    allowed_client_dn.write_text(data+"\n", encoding="utf-8")
+    allowed_client_dn.write_text(data + "\n", encoding="utf-8")
     load_allowed_client_dn(allowed_client_dn)
     a_name = rfc4514_cmp.dn_rfc2253_string_to_rfc4514_name(data)
 
     assert len(state.allowed_client_subject_dn_names) == 1
     assert a_name in state.allowed_client_subject_dn_names
 
+
 def test_load_reversed_dn_from_file(client: FlaskClient, allowed_client_dn: Path) -> None:
     """Verify that DN in wrong order are loaded from the configured file."""
-    from nsi_auth import state, load_allowed_client_dn
+    from nsi_auth import load_allowed_client_dn, state
 
-    data = 'CN=University Corporation For Advanced Internet Development,emailAddress=johndoe@internet2.edu,organizationIdentifier=NTRUS\\+MI-801069584,O=University Corporation For Advanced Internet Development,ST=Michigan,C=US'
+    data = "CN=University Corporation For Advanced Internet Development,emailAddress=johndoe@internet2.edu,organizationIdentifier=NTRUS\\+MI-801069584,O=University Corporation For Advanced Internet Development,ST=Michigan,C=US"
     # TODO: cryptography doesn't grok spaces after the commas.
     # These spaces are there when the admin uses openssl x509 -in bla.pem -txt without -nameopt rfc2253, so will be a common mistake
     # Without -nameopt, openssl also does not escape special characters.
     revdata = "C=US, ST=Michigan, O=University Corporation For Advanced Internet Development, organizationIdentifier=NTRUS+MI-801069584, emailAddress=johndoe@internet2.edu, CN=University Corporation For Advanced Internet Development"
-    allowed_client_dn.write_text(revdata+"\n", encoding="utf-8")
+    allowed_client_dn.write_text(revdata + "\n", encoding="utf-8")
     load_allowed_client_dn(allowed_client_dn)
     a_name = rfc4514_cmp.dn_rfc2253_string_to_rfc4514_name(data)
 
     assert len(state.allowed_client_subject_dn_names) == 1
     assert a_name in state.allowed_client_subject_dn_names
-

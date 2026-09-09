@@ -28,7 +28,7 @@ from typing import Callable
 import structlog
 from cryptography import x509
 from flask import Flask, request
-from pydantic import BaseModel, FilePath
+from pydantic import FilePath
 from pydantic_settings import BaseSettings
 from watchdog.events import FileModifiedEvent, FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
@@ -58,11 +58,11 @@ logger = structlog.get_logger(__name__)
 class ClientAuthnFormat(str, Enum):
     """How to parse the configured client-identity header into a Subject DN."""
 
-    DN_RFC2253 = "dn-rfc2253"      # bare RFC 2253 DN string (ingress-nginx, Envoy Lua)
+    DN_RFC2253 = "dn-rfc2253"  # bare RFC 2253 DN string (ingress-nginx, Envoy Lua)
     TRAEFIK_INFO = "traefik-info"  # Traefik X-Forwarded-Tls-Client-Cert-Info: Subject="..."
-    TRAEFIK_PEM = "traefik-pem"    # Traefik X-Forwarded-Tls-Client-Cert: minimized PEM chain
-    PEM = "pem"                    # standard PEM certificate
-    XFCC_CERT = "xfcc-cert"        # Envoy XFCC Cert= field (URL-encoded PEM)
+    TRAEFIK_PEM = "traefik-pem"  # Traefik X-Forwarded-Tls-Client-Cert: minimized PEM chain
+    PEM = "pem"  # standard PEM certificate
+    XFCC_CERT = "xfcc-cert"  # Envoy XFCC Cert= field (URL-encoded PEM)
     XFCC_SUBJECT = "xfcc-subject"  # Envoy XFCC Subject= field (DN string)
 
 
@@ -93,14 +93,17 @@ class Settings(BaseSettings):
 # Alternative is a DataClass, or no parent. Latter chosen.
 class State:
     """Application state."""
+
     # Note: if we inherit from BaseModel we get "Unable to generate pydantic-core
     # schema for <class 'cryptography.x509.name.Name'>."
     # So we do not inherit ;o)
-    allowed_client_subject_dn_names: list[x509.name.Name] = []
-    # Precomputed canonical attrs for each allowed DN. Used for order-independent
-    # equality in validate() — x509.Name.__eq__ is RDN-order-sensitive, but our
-    # allowlist semantics are not.
-    allowed_client_subject_dn_attrs: set[frozenset[tuple[str, str]]] = set()
+    def __init__(self) -> None:
+        """Start with an empty allowlist; load_allowed_client_dn() fills it."""
+        self.allowed_client_subject_dn_names: list[x509.name.Name] = []
+        # Precomputed canonical attrs for each allowed DN. Used for order-independent
+        # equality in validate() — x509.Name.__eq__ is RDN-order-sensitive, but our
+        # allowlist semantics are not.
+        self.allowed_client_subject_dn_attrs: set[frozenset[tuple[str, str]]] = set()
 
 
 def configure_logging() -> None:
@@ -120,8 +123,8 @@ def configure_logging() -> None:
     ]
 
     structlog.configure(
-        processors=shared_processors
-        + [
+        processors=[
+            *shared_processors,
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         wrapper_class=structlog.make_filtering_bound_logger(numeric_level),
@@ -177,7 +180,6 @@ logger.info(
 )
 
 
-
 # Codec registry: each format maps to a parser turning the header value into an
 # x509.Name (or None when the configured source is absent). Adding support for a
 # new proxy is one new entry here plus its parser in rfc4514_cmp.
@@ -192,7 +194,7 @@ _CODECS = {
 
 
 # Arno: pydantic cannot handle x509.Name
-def get_client_dn():  ### -> tuple[x509.Name | None, str]:
+def get_client_dn() -> tuple[x509.Name | None, str]:
     """Extract the client Subject DN from the configured header and format.
 
     The header name (``settings.tls_client_subject_authn_header``) and the parse
@@ -245,13 +247,18 @@ def validate() -> tuple[str, int] | tuple[str, int, dict[str, str]]:
     # Go's cert.Subject.String() vs. OpenSSL's RFC 2253 output).
     if rfc4514_cmp.name_attrs(request_rfc4514_name) in state.allowed_client_subject_dn_attrs:
         logger.info(f"allow {request_rfc4514_name} (from {source} header)")
-        return "OK", 200, {
-            "X-Auth-Method": "mTLS",
-            "X-Client-DN": rfc4514_cmp.name_rfc4514_string(request_rfc4514_name),
-        }
+        return (
+            "OK",
+            200,
+            {
+                "X-Auth-Method": "mTLS",
+                "X-Client-DN": rfc4514_cmp.name_rfc4514_string(request_rfc4514_name),
+            },
+        )
 
     logger.info(f"deny {request_rfc4514_name} (from {source} header)")
     return "Forbidden", 403
+
 
 #
 # File watch based on watchdog.
@@ -310,6 +317,7 @@ def watch_file(filepath: FilePath, callback: Callable[[FilePath], None]) -> None
     event = threading.Event()
     threading.Thread(target=watch, daemon=True).start()
 
+
 #
 # Load DN from file.
 #
@@ -340,6 +348,7 @@ def load_allowed_client_dn(filepath: FilePath) -> None:
         state.allowed_client_subject_dn_names = new_names
         state.allowed_client_subject_dn_attrs = new_attrs
         logger.info(f"load {len(new_names)} DN from {filepath}")
+
 
 if settings.use_watchdog:
     watchdog_file(settings.allowed_client_subject_dn_path, load_allowed_client_dn)

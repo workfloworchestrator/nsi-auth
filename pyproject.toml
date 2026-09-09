@@ -55,33 +55,8 @@ dev = [
     "pytest==9.1.1",
     "pytest-cov==7.1.0",
     "mypy==2.3.1",
-    "flake8==7.3.0",
-    "black==26.5.1",
     "ruff==0.16.5",
-    "isort==9.0.1",
-    "flake8-pyproject==1.2.4",
 ]
-
-[tool.black]
-line-length = 120
-target-version = ["py313", "py310"]
-exclude = '''
-(
-  /(
-      \.eggs         # exclude a few common directories in the
-    | \.git          # root of the project
-    | \.hg
-    | \.mypy_cache
-    | \.tox
-    | \.venv
-    | venv
-    | src
-  )/
-)
-'''
-
-[tool.flake8]
-max-line-length = 120
 
 [tool.ruff]
 lint.exclude = [
@@ -124,7 +99,7 @@ target-version = "py313"
 ban-relative-imports = "all"
 
 [tool.ruff.lint.per-file-ignores]
-"tests/*" = ["S101"]
+"tests/*" = ["ANN", "ARG001", "E501", "S101"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"

@@ -16,7 +16,6 @@
 import pytest
 from flask.testing import FlaskClient
 
-
 # ---------------------------------------------------------------------------
 # Happy paths
 # ---------------------------------------------------------------------------
@@ -197,8 +196,11 @@ def test_root_not_found(client: FlaskClient) -> None:
 
 @pytest.mark.parametrize("method", ["get", "post", "put", "delete", "patch"])
 def test_validate_accepts_any_method(client: FlaskClient, method: str) -> None:
-    """Validation runs for any method: Envoy ext_authz mirrors the downstream
-    method onto /validate (POST for SOAP backends), so GET-only would 405 them."""
+    """Validation runs for any method.
+
+    Envoy ext_authz mirrors the downstream method onto /validate (POST for SOAP
+    backends), so GET-only would 405 them.
+    """
     headers = {"ssl-client-subject-dn": "CN=CertA,OU=Dept X,O=Company Y,C=ZZ"}
     response = getattr(client, method)("/validate", headers=headers)
     assert response.status_code == 200

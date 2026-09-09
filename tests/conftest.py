@@ -29,9 +29,7 @@ def allowed_client_dn(tmp_path: Path) -> Path:
     return path
 
 
-def make_application(
-    allowed_dn_path: Path, header: str, fmt: str = "dn-rfc2253"
-) -> Generator[Flask, None, None]:
+def make_application(allowed_dn_path: Path, header: str, fmt: str = "dn-rfc2253") -> Generator[Flask, None, None]:
     """Configure and yield the Flask app for a specific header name and parse format.
 
     Handles both the initial import (via env vars) and subsequent

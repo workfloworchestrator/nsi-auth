@@ -17,7 +17,6 @@ from urllib.parse import quote_plus
 
 from flask.testing import FlaskClient
 
-
 # ---------------------------------------------------------------------------
 # Happy paths
 # ---------------------------------------------------------------------------
@@ -81,15 +80,11 @@ def test_validate_info_header_empty(info_client: FlaskClient) -> None:
 
 def test_validate_info_header_no_subject_wrapper(info_client: FlaskClient) -> None:
     """Header without Subject= wrapper returns 403."""
-    response = info_client.get(
-        "/validate", headers={"X-Forwarded-Tls-Client-Cert-Info": "CN=Test,O=Org,C=US"}
-    )
+    response = info_client.get("/validate", headers={"X-Forwarded-Tls-Client-Cert-Info": "CN=Test,O=Org,C=US"})
     assert response.status_code == 403
 
 
 def test_validate_wrong_header_name(info_client: FlaskClient) -> None:
     """Sending info via wrong header name returns 403."""
-    response = info_client.get(
-        "/validate", headers={"ssl-client-subject-dn": "CN=Test,O=Org,C=US"}
-    )
+    response = info_client.get("/validate", headers={"ssl-client-subject-dn": "CN=Test,O=Org,C=US"})
     assert response.status_code == 403

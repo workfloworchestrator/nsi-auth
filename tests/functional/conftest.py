@@ -19,10 +19,10 @@ from pytest import fixture
 
 from tests.conftest import make_application
 
-
 # ---------------------------------------------------------------------------
 # Traefik PEM cert header fixtures
 # ---------------------------------------------------------------------------
+
 
 @fixture
 def cert_allowed_client_dn(tmp_path: Path) -> Path:
@@ -56,6 +56,7 @@ def cert_client(cert_application: Flask) -> FlaskClient:
 # Traefik Cert-Info header fixtures
 # ---------------------------------------------------------------------------
 
+
 @fixture
 def info_allowed_client_dn(tmp_path: Path) -> Path:
     """Allowed DNs for Traefik Cert-Info tests."""
@@ -82,6 +83,7 @@ def info_client(info_application: Flask) -> FlaskClient:
 # Reversed DN order fixtures (for flexible file parsing tests)
 # ---------------------------------------------------------------------------
 
+
 @fixture
 def reversed_allowed_client_dn(tmp_path: Path) -> Path:
     """Allowed DNs with reversed (small-to-big) field order."""
@@ -107,6 +109,7 @@ def reversed_client(reversed_application: Flask) -> FlaskClient:
 # ---------------------------------------------------------------------------
 # Personal-attribute fixtures (Go OID-fallback form, real production case)
 # ---------------------------------------------------------------------------
+
 
 @fixture
 def personal_attrs_allowed_client_dn(tmp_path: Path) -> Path:

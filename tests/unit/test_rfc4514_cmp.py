@@ -22,7 +22,6 @@ from cryptography.x509.oid import NameOID
 
 import rfc4514_cmp
 
-
 # ---------------------------------------------------------------------------
 # Session-scoped test certificate
 # ---------------------------------------------------------------------------
@@ -39,14 +38,16 @@ def test_key():
 @pytest.fixture(scope="session")
 def test_cert(test_key):
     """Self-signed certificate with extended subject fields for testing."""
-    subject = x509.Name([
-        x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
-        x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "Michigan"),
-        x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Test Organization"),
-        x509.NameAttribute(_OID_ORGANIZATION_IDENTIFIER, "NTRUS+MI-123456"),
-        x509.NameAttribute(NameOID.EMAIL_ADDRESS, "test@example.com"),
-        x509.NameAttribute(NameOID.COMMON_NAME, "Test Client"),
-    ])
+    subject = x509.Name(
+        [
+            x509.NameAttribute(NameOID.COUNTRY_NAME, "US"),
+            x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, "Michigan"),
+            x509.NameAttribute(NameOID.ORGANIZATION_NAME, "Test Organization"),
+            x509.NameAttribute(_OID_ORGANIZATION_IDENTIFIER, "NTRUS+MI-123456"),
+            x509.NameAttribute(NameOID.EMAIL_ADDRESS, "test@example.com"),
+            x509.NameAttribute(NameOID.COMMON_NAME, "Test Client"),
+        ]
+    )
     return (
         x509.CertificateBuilder()
         .subject_name(subject)
@@ -118,7 +119,7 @@ def test_pem_valid_cert(test_cert, traefik_pem_str):
 
 
 def test_pem_extended_fields_present(traefik_pem_str):
-    """organizationIdentifier and emailAddress appear in the extracted DN."""
+    """OrganizationIdentifier and emailAddress appear in the extracted DN."""
     result = rfc4514_cmp.subject_dn_from_traefik_cert_pem(traefik_pem_str)
     oid_values = {attr.oid: attr.value for attr in result}
     assert _OID_ORGANIZATION_IDENTIFIER in oid_values
@@ -128,22 +129,22 @@ def test_pem_extended_fields_present(traefik_pem_str):
 
 
 def test_pem_garbage_raises():
-    """Garbage input raises an exception."""
-    with pytest.raises(Exception):
+    """Garbage input raises ValueError."""
+    with pytest.raises(ValueError):
         rfc4514_cmp.subject_dn_from_traefik_cert_pem("not-a-cert")
 
 
 def test_pem_valid_base64_not_cert_raises():
-    """Valid base64 that is not a DER certificate raises an exception."""
+    """Valid base64 that is not a DER certificate raises ValueError."""
     b64 = base64.b64encode(b"not a certificate").decode()
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError):
         rfc4514_cmp.subject_dn_from_traefik_cert_pem(b64)
 
 
 @pytest.mark.parametrize("value", ["", "   "])
 def test_pem_malformed_raises(value):
-    """Empty or whitespace-only input raises an exception."""
-    with pytest.raises(Exception):
+    """Empty or whitespace-only input raises ValueError."""
+    with pytest.raises(ValueError):
         rfc4514_cmp.subject_dn_from_traefik_cert_pem(value)
 
 
@@ -191,9 +192,7 @@ def test_name_attrs_hexstring_form_decodes_to_plain() -> None:
     envoy = rfc4514_cmp.subject_dn_from_xfcc_subject(
         'Subject="CN=Test,2.5.4.97=#13104558414D504C452D3132333435363738,C=NL"'
     )
-    allowed = rfc4514_cmp.dn_tagvalue_string_to_rfc4514_name(
-        "CN=Test,organizationIdentifier=EXAMPLE-12345678,C=NL"
-    )
+    allowed = rfc4514_cmp.dn_tagvalue_string_to_rfc4514_name("CN=Test,organizationIdentifier=EXAMPLE-12345678,C=NL")
     assert rfc4514_cmp.name_attrs(envoy) == rfc4514_cmp.name_attrs(allowed)
 
 
