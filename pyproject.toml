@@ -58,6 +58,10 @@ dev = [
     "ruff==0.16.8",
 ]
 
+[tool.uv]
+# Skip releases younger than 8 days; keep in sync with minimumReleaseAge in .github/renovate.json.
+exclude-newer = "8 days"
+
 [tool.ruff]
 lint.exclude = [
     ".git",
