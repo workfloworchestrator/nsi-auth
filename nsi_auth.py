@@ -32,6 +32,7 @@ from pydantic import FilePath
 from pydantic_settings import BaseSettings
 from watchdog.events import FileModifiedEvent, FileSystemEvent, FileSystemEventHandler
 from watchdog.observers import Observer
+from watchdog.observers.api import BaseObserver
 
 import rfc4514_cmp
 
@@ -280,8 +281,8 @@ class FileChangeHandler(FileSystemEventHandler):
             self.callback(self.filepath)
 
 
-def watchdog_file(filepath: FilePath, callback: Callable[[FilePath], None]) -> None:
-    """Setup watchdog to watch directory that the file resides in and call handler on change."""
+def watchdog_file(filepath: FilePath, callback: Callable[[FilePath], None]) -> BaseObserver:
+    """Watch the directory of `filepath` with watchdog, call `callback` on change, return the started observer."""
     observer = Observer()
     observer.schedule(
         FileChangeHandler(filepath, callback),
@@ -290,6 +291,7 @@ def watchdog_file(filepath: FilePath, callback: Callable[[FilePath], None]) -> N
         event_filter=[FileModifiedEvent],
     )
     observer.start()
+    return observer
 
 
 #
