@@ -41,9 +41,8 @@ def make_application(allowed_dn_path: Path, header: str, fmt: str = "dn-rfc2253"
 
     from nsi_auth import ClientAuthnFormat, app, load_allowed_client_dn, settings, state
 
-    old_header = settings.tls_client_subject_authn_header
-    old_fmt = settings.tls_client_authn_format
-    old_dns = state.allowed_client_subject_dn_names[:]
+    old_settings = vars(settings).copy()
+    old_state = vars(state).copy()
 
     settings.tls_client_subject_authn_header = header
     settings.tls_client_authn_format = ClientAuthnFormat(fmt)
@@ -52,9 +51,8 @@ def make_application(allowed_dn_path: Path, header: str, fmt: str = "dn-rfc2253"
     app.config["TESTING"] = True
     yield app
 
-    settings.tls_client_subject_authn_header = old_header
-    settings.tls_client_authn_format = old_fmt
-    state.allowed_client_subject_dn_names = old_dns
+    vars(settings).update(old_settings)
+    vars(state).update(old_state)
 
 
 @fixture
